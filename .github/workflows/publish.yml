@@ -16,20 +16,17 @@ on:
       - entrypoint.sh
       - etc/**
       - .github/workflows/publish.yml
-  # Build-only check for changes to the image.
+  # Every PR builds and smoke-tests the image, with no path filter, so `build`
+  # can be a required check.
   pull_request:
-    paths:
-      - Dockerfile
-      - entrypoint.sh
-      - etc/**
-      - .github/workflows/publish.yml
 
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  publish:
+  # Also the required status check's name; renaming it breaks branch protection.
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,23 +99,63 @@ jobs:
             org.opencontainers.image.description=CloudCLI UI (siteboon/claudecodeui) bundled with Claude Code
             org.opencontainers.image.version=${{ steps.versions.outputs.tag }}
 
-      - name: Build and push
+      # amd64 first, loaded into Docker for the smoke test. Publishing runs
+      # don't read the GitHub cache: on a fresh runner that makes them full
+      # rebuilds, with current apt packages, base image and fnm/uv.
+      - name: Build amd64 for the smoke test
+        if: steps.existing.outputs.skip != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: claudecodeui:smoke
+          build-args: |
+            CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
+            CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
+          cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
+
+      - name: Smoke test
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          # A non-default PUID exercises the entrypoint's user remapping.
+          docker run -d --name smoke -e PUID=1234 -e PGID=1234 claudecodeui:smoke
+          trap 'docker logs smoke; docker rm -f smoke >/dev/null' EXIT
+          for _ in $(seq 60); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' smoke)"
+            [ "$status" = starting ] || break
+            # Stop waiting if the server crashed.
+            [ "$(docker inspect -f '{{.State.Running}}' smoke)" = true ] || { status=exited; break; }
+            sleep 2
+          done
+          echo "health: $status"
+          [ "$status" = healthy ]
+          docker exec -u dev smoke bash -lc '
+            set -e
+            [ "$(id -u):$(id -g)" = 1234:1234 ]
+            [ "$(stat -c %u /home/dev)" = 1234 ]
+            node --version
+            fnm --version
+            uv --version
+            claude --version
+            gh --version | head -1
+          '
+
+      # Reuses the tested amd64 layers from the builder and adds arm64: from
+      # the GitHub cache on PRs, from scratch when publishing.
+      - name: Build multi-arch and push
         if: steps.existing.outputs.skip != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUSH == 'true' }}
-          # Every build that publishes skips the layer cache and re-pulls the
-          # base, so a published image always has current apt packages, base
-          # image and fnm/uv. Build-only runs (PRs) use the cache; uncached
-          # runs still write to it, so PR builds start from fresh layers.
-          no-cache: ${{ env.PUSH == 'true' }}
-          pull: ${{ env.PUSH == 'true' }}
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+          cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
           cache-to: type=gha,mode=max

@@ -231,7 +231,14 @@ GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
   only builds.
 - **Push to `main`** that changes the image: rebuilds without the build cache
   and publishes.
-- **Pull requests**: build only, using the build cache so checks stay fast.
+- **Pull requests**: every PR builds both architectures and smoke-tests the
+  image, using the build cache so checks stay fast. Nothing is pushed. The
+  job is named `build`, which is the check to require in branch protection.
+
+Every run, publishing or not, first builds amd64 and smoke-tests it: it starts
+the container with a non-default `PUID`, waits for the healthcheck, and runs
+`node`, `fnm`, `uv`, `claude` and `gh` as `dev`. The multi-arch build then
+reuses those tested amd64 layers.
 
 After the first publish, set the package to public once: *your profile →
 Packages → claudecodeui-docker → Package settings → Change visibility*.
