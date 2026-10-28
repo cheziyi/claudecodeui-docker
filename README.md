@@ -233,9 +233,6 @@ GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
   and publishes.
 - **Pull requests**: build only, using the build cache so checks stay fast.
 
-After the first publish, set the package to public once: *your profile →
-Packages → claudecodeui-docker → Package settings → Change visibility*.
-
 ## License
 
 The files in this repository are MIT licensed. The image also contains
