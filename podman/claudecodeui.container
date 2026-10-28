@@ -1,0 +1,54 @@
+# Podman Quadlet unit: the Podman equivalent of compose.yaml.
+#
+# Install (rootless):
+#   mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspace
+#   cp claudecodeui.container claudecodeui-home.volume ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start claudecodeui
+#
+# To keep it running after you log out: loginctl enable-linger "$USER"
+
+[Unit]
+Description=Claude Code UI (CloudCLI + Claude Code)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=ghcr.io/cheziyi/claudecodeui-docker:latest
+ContainerName=claudecodeui
+PublishPort=3001:3001
+
+# Rootless Podman: map your host user to the container's "node" user (1000)
+# and run as it, so files in the workspace stay owned by you. PUID/PGID are
+# not needed here.
+UserNS=keep-id:uid=1000,gid=1000
+User=1000:1000
+
+# Your projects. The directory must exist. :Z relabels it for SELinux
+# (Fedora/RHEL); harmless elsewhere.
+Volume=%h/claudecodeui/workspace:/workspace:Z
+# Claude Code login, settings and sessions, the UI's accounts database,
+# git/gh/ssh config and shell history. Survives image updates.
+Volume=claudecodeui-home.volume:/home/node
+
+Environment=TZ=Etc/UTC
+# Optional: commit identity for git inside the container.
+#Environment=GIT_USER_NAME="Your Name"
+#Environment=GIT_USER_EMAIL=you@example.com
+# Optional: skip the interactive login. Keep tokens out of this file: put
+# CLAUDE_CODE_OAUTH_TOKEN=... (from `claude setup-token`) or ANTHROPIC_API_KEY=...
+# in an env file and point to it here.
+#EnvironmentFile=%h/.config/claudecodeui.env
+
+HealthCmd=curl -fsS http://127.0.0.1:3001/health
+HealthInterval=30s
+HealthStartPeriod=30s
+
+# Lets `podman auto-update` (or podman-auto-update.timer) pull new builds.
+AutoUpdate=registry
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

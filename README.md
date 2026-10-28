@@ -29,6 +29,38 @@ docker run -d --name claudecodeui -p 3001:3001 \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
 
+### Podman
+
+[`podman/`](podman/) has a [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+unit, the Podman equivalent of `compose.yaml`. systemd runs the container,
+restarts it on failure and starts it at boot. Tested with Podman 4.9.
+
+```sh
+mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspace
+cp podman/claudecodeui.container podman/claudecodeui-home.volume ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user start claudecodeui
+loginctl enable-linger "$USER"   # keep it running after you log out
+```
+
+Projects go in `~/claudecodeui/workspace`. To pick up new weekly builds, run
+`podman auto-update`, or enable `systemctl --user enable --now podman-auto-update.timer`.
+
+Without systemd, the equivalent one-off command is:
+
+```sh
+mkdir -p ~/claudecodeui/workspace
+podman run -d --name claudecodeui -p 3001:3001 \
+  --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
+  -v ~/claudecodeui/workspace:/workspace:Z \
+  -v claudecodeui-home:/home/node \
+  ghcr.io/cheziyi/claudecodeui-docker:latest
+```
+
+Under rootless Podman, `--userns keep-id` maps your host user to the
+container's `node` user, so files in the workspace stay owned by you. There's no
+need for `PUID`/`PGID`.
+
 Then:
 
 1. Open <http://localhost:3001> and create the UI's admin account. The first
