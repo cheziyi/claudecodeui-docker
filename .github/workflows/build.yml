@@ -101,13 +101,38 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          cloudcli="$(npm view @cloudcli-ai/cloudcli version)"
-          claude="$(npm view @anthropic-ai/claude-code version)"
+          # The ranges come from the release being built (upstream.env), so
+          # each release line keeps the upstream majors it was released with.
+          if [ -f upstream.env ]; then
+            # shellcheck source=/dev/null
+            . ./upstream.env
+          else
+            echo "::warning::This release has no upstream.env; using the latest CloudCLI and Claude Code."
+          fi
+          # Newest version in the range; npm skips pre-releases.
+          newest() {
+            { npm view "$1@$2" version --json 2>/dev/null || true; } \
+              | jq -r 'if type == "array" then .[] elif type == "string" then . else empty end' | sort -V | tail -1
+          }
+          # Flags a newer upstream release that the range keeps out.
+          check_latest() {
+            local latest
+            latest="$(npm view "$1" version)"
+            if [ "$latest" != "$2" ]; then
+              echo "::notice::$1 $latest is out but outside $3; staying on $2. Widen the range in upstream.env to adopt it."
+              echo "$1 $latest is available outside \`$3\`." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+          cloudcli="$(newest @cloudcli-ai/cloudcli "${CLOUDCLI_RANGE:-latest}")"
+          claude="$(newest @anthropic-ai/claude-code "${CLAUDE_CODE_RANGE:-latest}")"
+          [ -n "$cloudcli" ] && [ -n "$claude" ] || { echo "::error::No upstream version matches upstream.env"; exit 1; }
+          check_latest @cloudcli-ai/cloudcli "$cloudcli" "${CLOUDCLI_RANGE:-latest}"
+          check_latest @anthropic-ai/claude-code "$claude" "${CLAUDE_CODE_RANGE:-latest}"
           {
             echo "cloudcli=$cloudcli"
             echo "claude=$claude"
           } >> "$GITHUB_OUTPUT"
-          echo "CloudCLI $cloudcli, Claude Code $claude" >> "$GITHUB_STEP_SUMMARY"
+          echo "CloudCLI $cloudcli (${CLOUDCLI_RANGE:-latest}), Claude Code $claude (${CLAUDE_CODE_RANGE:-latest})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log in to GHCR
         if: env.PUSH == 'true' && steps.release.outputs.skip != 'true'

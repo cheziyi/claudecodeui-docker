@@ -203,7 +203,11 @@ environment variables, the user, the tools that come with it.
 - **Patch** (`1.2.1`): fixes.
 
 Each tag points at the newest build of its line, so every tag except a digest
-gets the weekly upstream and security updates:
+gets the weekly upstream and security updates. Those updates stay within the
+upstream majors the release line was published with (see
+[`upstream.env`](upstream.env)), so a new CloudCLI or Claude Code major never
+reaches you through a weekly rebuild. It arrives only with a release of this
+image, and as a new major here if it breaks existing setups.
 
 | Tag | Follows |
 |---|---|
@@ -232,8 +236,8 @@ passwordless `sudo` inside the container. Treat port 3001 like SSH access:
 ## Building locally
 
 ```sh
-docker build -t claudecodeui .
-# Pin versions:
+docker build -t claudecodeui .   # latest CloudCLI and Claude Code
+# Pin versions (CI resolves them from upstream.env):
 docker build -t claudecodeui \
   --build-arg CLOUDCLI_VERSION=1.37.6 \
   --build-arg CLAUDE_CODE_VERSION=2.1.312 .
@@ -260,13 +264,25 @@ tag, never `1`, `1.3` or `latest`.
   it's the highest release in that line, so a patch to an older line can't take
   them backwards.
 - **Weekly** (Mondays 04:17 UTC): rebuilds the latest release when CloudCLI or
-  Claude Code has a new version, and skips otherwise. Older release lines aren't
-  rebuilt.
+  Claude Code has a new version within that release's ranges, and skips
+  otherwise. Older release lines aren't rebuilt.
 - **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
   latest release, or the version you enter, even if nothing upstream changed,
   e.g. to pick up security fixes.
 
 Pushes to `main` don't publish: changes reach users with the next release.
+
+### Upstream majors
+
+[`upstream.env`](upstream.env) sets which CloudCLI and Claude Code versions a
+release line accepts, as npm semver ranges (`^1` means any 1.x). Every build
+installs the newest version inside each range. When a newer major is out, the
+run's summary says so (e.g. "@cloudcli-ai/cloudcli 2.0.0 is available outside
+`^1`").
+
+To adopt it, widen the range in a PR, and let the PR's smoke test and your own
+testing decide the release: a new major of this image if it breaks existing
+setups (changed settings or data, removed features), a minor otherwise.
 
 Every run first builds amd64 and smoke-tests it: it starts the container with a
 non-default `PUID`, waits for the healthcheck, and runs `node`, `fnm`, `uv`,
