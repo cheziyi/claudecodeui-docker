@@ -1,6 +1,6 @@
 services:
   claudecodeui:
-    image: ghcr.io/cheziyi/claudecodeui-docker:1
+    image: ghcr.io/cheziyi/claudecodeui:1
     # Or build it yourself from this repository:
     # build: .
     container_name: claudecodeui

@@ -35,7 +35,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/${{ github.repository }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/claudecodeui
       PUSH: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@v7
@@ -248,7 +248,7 @@ jobs:
             UV_VERSION=${{ steps.versions.outputs.uv }}
           tags: ${{ steps.release.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=claudecodeui-docker
+            org.opencontainers.image.title=claudecodeui
             org.opencontainers.image.description=CloudCLI UI (siteboon/claudecodeui) bundled with Claude Code
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.release.outputs.version }}

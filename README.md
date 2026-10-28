@@ -6,7 +6,7 @@ installed. Start the container, open the browser, log in to Claude, and start co
 from your desktop, or from your phone.
 
 ```
-ghcr.io/cheziyi/claudecodeui-docker:1
+ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Built for `linux/amd64` and `linux/arm64`. Releases are versioned on their own
@@ -29,7 +29,7 @@ docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
   -v ~/claudecodeui/workspaces:/workspaces \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:1
+  ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Either way, projects go in `~/claudecodeui/workspaces` and everything else in
@@ -63,7 +63,7 @@ podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
   -v ~/claudecodeui/workspaces:/workspaces:Z \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:1
+  ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
@@ -147,7 +147,7 @@ directories and is gone after an update. To keep system packages, build your own
 image on top of this one:
 
 ```dockerfile
-FROM ghcr.io/cheziyi/claudecodeui-docker:1
+FROM ghcr.io/cheziyi/claudecodeui:1
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 ```
@@ -215,7 +215,7 @@ To freeze an exact build, pin its digest (`…:1@sha256:…`). To see which
 CloudCLI, Claude Code, fnm and uv a build contains:
 
 ```sh
-docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui-docker:1
+docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui:1
 ```
 
 ## Security
