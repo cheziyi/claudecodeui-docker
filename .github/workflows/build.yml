@@ -1,24 +1,24 @@
 name: Build image
 
 on:
-  # Manual runs on main always rebuild from scratch and push, e.g. to pick up
-  # security fixes or a new fnm/uv. On other branches they only build.
-  workflow_dispatch:
-  # Weekly; skipped when this CloudCLI + Claude Code pair is already published,
-  # otherwise rebuilt from scratch like a manual run.
+  # Every PR builds and smoke-tests the image, with no path filter, so `build`
+  # can be a required check. Nothing is pushed.
+  pull_request:
+  # Pushing a release tag (v1.2.3, or v1.2.3-rc.1 for a pre-release) publishes
+  # that release.
+  push:
+    tags: ["v*"]
+  # Weekly: rebuild the latest release when CloudCLI or Claude Code has a new
+  # version, picking up Debian and fnm/uv updates along the way.
   schedule:
     - cron: "17 4 * * 1"
-  # Changes to the image on main; rebuilt from scratch and published.
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - entrypoint.sh
-      - etc/**
-      - .github/workflows/build.yml
-  # Every PR builds and smoke-tests the image, with no path filter, so `build`
-  # can be a required check.
-  pull_request:
+  # Manual: rebuild a release (default: the latest) from scratch, e.g. to pick
+  # up security fixes. Publishes only when run from main.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release to rebuild, e.g. 1.2.3 (default the latest release)
+        required: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -32,13 +32,73 @@ jobs:
       contents: read
       packages: write
     env:
-      # Only main publishes, so a manual run on a branch can't overwrite latest.
-      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+      IMAGE: ghcr.io/${{ github.repository }}
+      PUSH: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Release tags, to find the latest release and which tags move.
+          fetch-depth: 0
+
+      # Which release this run builds, checked out, and the tags it gets. Each
+      # of X.Y, X and latest moves only if this is the highest release in that
+      # line, so a patch to an older line can't take latest backwards.
+      - name: Resolve release
+        id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE,,}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          stable() { git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V; }
+
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              {
+                echo "version=0.0.0-pr.${{ github.event.number }}"
+                echo "revision=$GITHUB_SHA"
+              } >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            push)
+              tag="$GITHUB_REF_NAME" ;;
+            *)
+              if [ -n "${INPUT_VERSION:-}" ]; then tag="v${INPUT_VERSION#v}"; else tag="$(stable | tail -1)"; fi
+              if [ -z "$tag" ]; then
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                echo "No release yet; nothing to rebuild." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+                echo "::error::No release tag $tag"
+                exit 1
+              fi
+              git checkout --detach "$tag" ;;
+          esac
+
+          version="${tag#v}"
+          if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$tag is not a release tag (vX.Y.Z or vX.Y.Z-prerelease)"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"
+
+          tags="$image:$version"
+          if [ -z "${BASH_REMATCH[3]}" ]; then
+            [ "$(stable | grep "^v$major\.$minor\." | tail -1)" = "$tag" ] && tags="$tags,$image:$major.$minor"
+            [ "$(stable | grep "^v$major\." | tail -1)" = "$tag" ] && tags="$tags,$image:$major"
+            [ "$(stable | tail -1)" = "$tag" ] && tags="$tags,$image:latest"
+          fi
+          {
+            echo "version=$version"
+            echo "tags=$tags"
+            echo "revision=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $version → ${tags//,/, }" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve upstream versions
         id: versions
+        if: steps.release.outputs.skip != 'true'
         run: |
           set -euo pipefail
           cloudcli="$(npm view @cloudcli-ai/cloudcli version)"
@@ -46,64 +106,50 @@ jobs:
           {
             echo "cloudcli=$cloudcli"
             echo "claude=$claude"
-            echo "image=ghcr.io/${GITHUB_REPOSITORY,,}"
-            echo "tag=${cloudcli}-claude${claude}"
           } >> "$GITHUB_OUTPUT"
           echo "CloudCLI $cloudcli, Claude Code $claude" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log in to GHCR
-        if: env.PUSH == 'true'
+        if: env.PUSH == 'true' && steps.release.outputs.skip != 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The version-pair tag is written once and never moves, so it's safe to
-      # pin. Scheduled runs skip entirely when it exists; other runs still
-      # publish latest and <cloudcli>, just not the pair tag.
-      - name: Check for an existing build of this pair
+      # Weekly runs skip when the published build of this release already has
+      # these CloudCLI and Claude Code versions, read back from its labels.
+      - name: Check whether upstream changed
         id: existing
-        if: env.PUSH == 'true'
+        if: github.event_name == 'schedule' && steps.release.outputs.skip != 'true'
         env:
-          REF: ${{ steps.versions.outputs.image }}:${{ steps.versions.outputs.tag }}
+          REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
+          WANT: ${{ steps.versions.outputs.cloudcli }} ${{ steps.versions.outputs.claude }}
         run: |
-          if docker buildx imagetools inspect "$REF" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            if [ "$GITHUB_EVENT_NAME" = schedule ]; then
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "$REF is already published; leaving that tag as is." >> "$GITHUB_STEP_SUMMARY"
-            fi
+          set -euo pipefail
+          if ! config="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null)"; then
+            echo "$REF isn't published yet; building it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A multi-platform image gives one config per platform; their labels match.
+          have="$(jq -r '(if has("config") then . else (to_entries | first | .value) end).config.Labels
+            | "\(.["io.github.cheziyi.claudecodeui-docker.cloudcli-version"]) \(.["io.github.cheziyi.claudecodeui-docker.claude-code-version"])"' <<<"$config")"
+          if [ "$have" = "$WANT" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$REF already has CloudCLI and Claude Code $WANT; nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: docker/setup-qemu-action@v4
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
 
       - uses: docker/setup-buildx-action@v4
-        if: steps.existing.outputs.skip != 'true'
-
-      - name: Image metadata
-        id: meta
-        if: steps.existing.outputs.skip != 'true'
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ steps.versions.outputs.image }}
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.versions.outputs.tag }},enable=${{ steps.existing.outputs.exists != 'true' }}
-            type=raw,value=${{ steps.versions.outputs.cloudcli }}
-          labels: |
-            org.opencontainers.image.title=claudecodeui-docker
-            org.opencontainers.image.description=CloudCLI UI (siteboon/claudecodeui) bundled with Claude Code
-            org.opencontainers.image.version=${{ steps.versions.outputs.tag }}
+        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
 
       # amd64 first, loaded into Docker for the smoke test. Publishing runs
       # don't read the GitHub cache: on a fresh runner that makes them full
       # rebuilds, with current apt packages, base image and fnm/uv.
       - name: Build amd64 for the smoke test
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -117,7 +163,7 @@ jobs:
           cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
 
       - name: Smoke test
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
         run: |
           set -euo pipefail
           # A non-default PUID exercises the entrypoint's user remapping.
@@ -146,7 +192,7 @@ jobs:
       # Reuses the tested amd64 layers from the builder and adds arm64: from
       # the GitHub cache on PRs, from scratch when publishing.
       - name: Build multi-arch and push
-        if: steps.existing.outputs.skip != 'true'
+        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -155,7 +201,14 @@ jobs:
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.release.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=claudecodeui-docker
+            org.opencontainers.image.description=CloudCLI UI (siteboon/claudecodeui) bundled with Claude Code
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
+            io.github.cheziyi.claudecodeui-docker.cloudcli-version=${{ steps.versions.outputs.cloudcli }}
+            io.github.cheziyi.claudecodeui-docker.claude-code-version=${{ steps.versions.outputs.claude }}
           cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
           cache-to: type=gha,mode=max

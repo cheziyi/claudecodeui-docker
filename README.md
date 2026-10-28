@@ -6,11 +6,12 @@ installed. Start the container, open the browser, log in to Claude, and start co
 from your desktop, or from your phone.
 
 ```
-ghcr.io/cheziyi/claudecodeui-docker:latest
+ghcr.io/cheziyi/claudecodeui-docker:1
 ```
 
-Built for `linux/amd64` and `linux/arm64`, and rebuilt weekly when either upstream
-releases a new version.
+Built for `linux/amd64` and `linux/arm64`. Releases are versioned on their own
+(see [Versions and tags](#versions-and-tags)), and the latest release is rebuilt
+weekly when CloudCLI or Claude Code ships a new version.
 
 ## Quick start
 
@@ -27,7 +28,7 @@ docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
   -v ~/claudecodeui/workspaces:/workspaces \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:latest
+  ghcr.io/cheziyi/claudecodeui-docker:1
 ```
 
 Either way, projects go in `~/claudecodeui/workspaces` and everything else in
@@ -69,7 +70,7 @@ podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
   -v ~/claudecodeui/workspaces:/workspaces:Z \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:latest
+  ghcr.io/cheziyi/claudecodeui-docker:1
 ```
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
@@ -91,7 +92,7 @@ under the gear icon in the sidebar.
 
 ## What's inside
 
-- CloudCLI UI and Claude Code, both pinned to the versions in the image tag
+- CloudCLI UI and Claude Code, at the versions recorded in the image labels
 - Debian 13 (trixie) with `build-essential` and Python 3
 - [fnm](https://github.com/Schniz/fnm) for Node.js versions and
   [uv](https://docs.astral.sh/uv/) for Python versions, packages and tools.
@@ -153,7 +154,7 @@ directories and is gone after an update. To keep system packages, build your own
 image on top of this one:
 
 ```dockerfile
-FROM ghcr.io/cheziyi/claudecodeui-docker:latest
+FROM ghcr.io/cheziyi/claudecodeui-docker:1
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 ```
@@ -190,12 +191,33 @@ Your login, sessions and projects live in the volumes, so updating doesn't lose
 them. Claude Code's built-in auto-updater is turned off because the image is the
 update mechanism.
 
-Tags:
+### Versions and tags
 
-- `latest`: newest build
-- `<cloudcli>-claude<claude-code>`, e.g. `1.37.6-claude2.1.312`: the first build of a
-  specific pair. It never changes after it's published, so it's safe to pin.
-- `<cloudcli>`, e.g. `1.37.6`: newest build of that CloudCLI release
+The image has its own [semantic version](https://semver.org), separate from
+CloudCLI's and Claude Code's. It describes this packaging: paths, volumes,
+environment variables, the user, the tools that come with it.
+
+- **Major** (`2.0.0`): a breaking change for existing setups, e.g. a renamed
+  path or volume, or a removed variable. Check the release notes before moving.
+- **Minor** (`1.3.0`): new features that work with your existing setup.
+- **Patch** (`1.2.1`): fixes.
+
+Each tag points at the newest build of its line, so every tag except a digest
+gets the weekly upstream and security updates:
+
+| Tag | Follows |
+|---|---|
+| `1` | the newest `1.x` release. Use this to auto-update without breaking changes. |
+| `1.2` | the newest `1.2.x` release |
+| `1.2.0` | exactly that release |
+| `latest` | the newest release, including the next major |
+
+To freeze an exact build, pin its digest (`…:1@sha256:…`). To see which
+CloudCLI and Claude Code a build contains:
+
+```sh
+docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui-docker:1
+```
 
 ## Security
 
@@ -217,29 +239,41 @@ docker build -t claudecodeui \
   --build-arg CLAUDE_CODE_VERSION=2.1.312 .
 ```
 
-## Publishing
+## Releasing and publishing
 
-`.github/workflows/build.yml` (*Build image*) builds and smoke-tests the image
-on every run, and on `main` also pushes it to GHCR using the repository's
-built-in `GITHUB_TOKEN`. No secrets are needed.
+To release, tag `main` with the new version and push the tag (or create a
+GitHub release, which does the same):
 
-- **Weekly** (Mondays 04:17 UTC): looks up the latest CloudCLI and Claude Code on
-  npm, and skips the build if that pair is already published. Otherwise it
-  rebuilds without the build cache, which also picks up Debian package updates
-  and the latest fnm and uv.
-- **Manual** (*Actions → Build image → Run workflow*) on `main`: always rebuilds
-  without the build cache, e.g. to pick up security fixes. On other branches it
-  only builds.
-- **Push to `main`** that changes the image: rebuilds without the build cache
-  and publishes.
+```sh
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+`.github/workflows/build.yml` (*Build image*) then builds, smoke-tests and
+publishes it to GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets
+are needed. Tags like `v1.3.0-rc.1` publish as a pre-release: only their exact
+tag, never `1`, `1.3` or `latest`.
+
 - **Pull requests**: every PR builds both architectures and smoke-tests the
-  image, using the build cache so checks stay fast. Nothing is pushed. The
-  job is named `build`, which is the check to require in branch protection.
+  image, using the build cache so checks stay fast. Nothing is pushed. The job
+  is named `build`, which is the check to require in branch protection.
+- **Release tags**: publish that release. `1.2`, `1` and `latest` move only if
+  it's the highest release in that line, so a patch to an older line can't take
+  them backwards.
+- **Weekly** (Mondays 04:17 UTC): rebuilds the latest release when CloudCLI or
+  Claude Code has a new version, and skips otherwise. Older release lines aren't
+  rebuilt.
+- **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
+  latest release, or the version you enter, even if nothing upstream changed,
+  e.g. to pick up security fixes.
 
-Every run, publishing or not, first builds amd64 and smoke-tests it: it starts
-the container with a non-default `PUID`, waits for the healthcheck, and runs
-`node`, `fnm`, `uv`, `claude` and `gh` as `dev`. The multi-arch build then
-reuses those tested amd64 layers.
+Pushes to `main` don't publish: changes reach users with the next release.
+
+Every run first builds amd64 and smoke-tests it: it starts the container with a
+non-default `PUID`, waits for the healthcheck, and runs `node`, `fnm`, `uv`,
+`claude` and `gh` as `dev`. The multi-arch build then reuses those tested amd64
+layers, so the published image is the one that passed. Builds that publish
+don't use the build cache, so they always get current Debian packages, the base
+image and the latest fnm and uv.
 
 ## License
 
