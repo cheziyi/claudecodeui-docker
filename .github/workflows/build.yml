@@ -1,4 +1,4 @@
-name: Publish image
+name: Build image
 
 on:
   # Manual runs on main always rebuild from scratch and push, e.g. to pick up
@@ -15,13 +15,13 @@ on:
       - Dockerfile
       - entrypoint.sh
       - etc/**
-      - .github/workflows/publish.yml
+      - .github/workflows/build.yml
   # Every PR builds and smoke-tests the image, with no path filter, so `build`
   # can be a required check.
   pull_request:
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
