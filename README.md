@@ -25,7 +25,7 @@ Or without Compose:
 docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
   -v "$PWD/workspace:/workspace" \
-  -v claudecodeui-home:/home/node \
+  -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
 
@@ -53,12 +53,12 @@ mkdir -p ~/claudecodeui/workspace
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
   -v ~/claudecodeui/workspace:/workspace:Z \
-  -v claudecodeui-home:/home/node \
+  -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
-container's `node` user, so files in the workspace stay owned by you. There's no
+container's `dev` user, so files in the workspace stay owned by you. There's no
 need for `PUID`/`PGID`.
 
 Then:
@@ -77,7 +77,10 @@ under the gear icon in the sidebar.
 ## What's inside
 
 - CloudCLI UI and Claude Code, both pinned to the versions in the image tag
-- Node.js 22, Python 3 (with `venv`/`pip`), and `build-essential`
+- Debian 13 (trixie) with `build-essential` and Python 3
+- [fnm](https://github.com/Schniz/fnm) for Node.js versions and
+  [uv](https://docs.astral.sh/uv/) for Python versions, packages and tools.
+  Node.js 26 (LTS) is available out of the box.
 - `git`, `git-lfs`, `gh` (GitHub CLI), `openssh-client`
 - `ripgrep`, `fd`, `jq`, `tree`, `htop`, `vim`, `nano`, `curl`, `wget`, `zip`/`unzip`
 - Passwordless `sudo`, so you (or Claude) can `sudo apt-get install` anything else
@@ -104,7 +107,36 @@ can be passed as environment variables too. See the
 | Path | Holds |
 |---|---|
 | `/workspace` | Your projects. Bind-mount a host directory here. |
-| `/home/node` | Claude Code login, settings, MCP servers and session history (`~/.claude`, `~/.claude.json`), the UI's account database (`~/.cloudcli`), git/gh/ssh config, user-level `npm install -g` packages. Keep it on a named volume so it survives image updates. |
+| `/home/dev` | Claude Code login, settings, MCP servers and session history (`~/.claude`, `~/.claude.json`), the UI's account database (`~/.cloudcli`), git/gh/ssh config, and the languages and tools you install (below). Keep it on a named volume so it survives image updates. |
+
+### Node.js and Python versions
+
+Install whatever versions your projects need. They go into the home volume,
+so they survive image updates:
+
+```sh
+fnm install 24 && fnm default 24   # your default `node`
+uv python install 3.12             # Python versions for uv projects/venvs
+uv tool install ruff               # CLI tools, on PATH in ~/.local/bin
+npm install -g pnpm                # global npm packages
+```
+
+In the shell, fnm switches versions automatically when you `cd` into a project
+with an `.nvmrc` or `.node-version` file. Claude Code's commands use your
+`fnm default`.
+
+Until you set a default, `node` is the image's Node.js 26. The UI server always
+runs on that copy, so switching versions can't break it.
+
+Anything installed with `sudo apt-get install` goes into the image's system
+directories and is gone after an update. To keep system packages, build your own
+image on top of this one:
+
+```dockerfile
+FROM ghcr.io/cheziyi/claudecodeui-docker:latest
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+```
 
 ### GitHub access
 
@@ -114,11 +146,11 @@ on every start. For SSH remotes, put a key in `~/.ssh` instead.
 
 ### Shell access from the host
 
-The UI has a built-in shell. To open one from the host, use `-u node` so files
+The UI has a built-in shell. To open one from the host, use `-u dev` so files
 you create aren't owned by root:
 
 ```sh
-docker exec -it -u node claudecodeui bash
+docker exec -it -u dev claudecodeui bash
 ```
 
 ### Running as a fixed user

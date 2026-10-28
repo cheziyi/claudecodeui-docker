@@ -18,7 +18,7 @@ Image=ghcr.io/cheziyi/claudecodeui-docker:latest
 ContainerName=claudecodeui
 PublishPort=3001:3001
 
-# Rootless Podman: map your host user to the container's "node" user (1000)
+# Rootless Podman: map your host user to the container's "dev" user (1000)
 # and run as it, so files in the workspace stay owned by you. PUID/PGID are
 # not needed here.
 UserNS=keep-id:uid=1000,gid=1000
@@ -29,7 +29,7 @@ User=1000:1000
 Volume=%h/claudecodeui/workspace:/workspace:Z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
-Volume=claudecodeui-home.volume:/home/node
+Volume=claudecodeui-home.volume:/home/dev
 
 Environment=TZ=Etc/UTC
 # Optional: commit identity for git inside the container.

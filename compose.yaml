@@ -25,7 +25,7 @@ services:
       - ./workspace:/workspace
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
-      - home:/home/node
+      - home:/home/dev
 
 volumes:
   home:

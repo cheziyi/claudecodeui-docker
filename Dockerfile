@@ -2,19 +2,27 @@
 
 # CloudCLI UI (siteboon/claudecodeui) + Claude Code in one ready-to-code image.
 #
-# The full (non-slim) Debian image already ships git, curl, gcc/make and
-# python3, which native npm modules and most coding sessions need anyway.
-FROM node:22-bookworm
+# Plain Debian plus fnm and uv: users manage their own Node.js and Python
+# versions, which live in the persisted home volume and survive image updates.
+FROM debian:trixie-slim
 
 # "latest" keeps local builds simple; CI passes exact versions so every
 # published tag maps to a known pair of upstream releases.
 ARG CLOUDCLI_VERSION=latest
 ARG CLAUDE_CODE_VERSION=latest
+# Node.js major that runs the CloudCLI server itself, separate from any
+# versions users install with fnm. Pinned to the current LTS so a new major
+# (and its native-module ABI) is adopted deliberately.
+ARG NODE_MAJOR=26
+ARG TARGETARCH
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Developer tooling plus the GitHub CLI from its official apt repository.
+# python3 and build-essential are also what node-gyp needs for native modules.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
     install -d -m 0755 /etc/apt/keyrings; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
@@ -25,6 +33,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         build-essential \
         fd-find \
+        file \
         gh \
         git \
         git-lfs \
@@ -36,8 +45,6 @@ RUN set -eux; \
         openssh-client \
         procps \
         python3 \
-        python3-pip \
-        python3-venv \
         ripgrep \
         sudo \
         tini \
@@ -46,41 +53,105 @@ RUN set -eux; \
         unzip \
         vim \
         wget \
+        xz-utils \
         zip; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
     rm -rf /var/lib/apt/lists/*
 
+# fnm (Node.js versions) and uv (Python versions, packages and tools).
 RUN set -eux; \
+    case "$TARGETARCH" in \
+        amd64) fnm_asset=fnm-linux.zip; uv_asset=uv-x86_64-unknown-linux-gnu ;; \
+        arm64) fnm_asset=fnm-arm64.zip; uv_asset=uv-aarch64-unknown-linux-gnu ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/fnm.zip "https://github.com/Schniz/fnm/releases/latest/download/$fnm_asset"; \
+    unzip -q /tmp/fnm.zip -d /usr/local/bin; \
+    chmod 0755 /usr/local/bin/fnm; \
+    rm /tmp/fnm.zip; \
+    curl -fsSL "https://github.com/astral-sh/uv/releases/latest/download/$uv_asset.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \
+    fnm --version; \
+    uv --version
+
+# The server's own Node.js, installed with fnm into a root-owned location.
+RUN set -eux; \
+    fnm --fnm-dir /opt/fnm install "$NODE_MAJOR"; \
+    fnm --fnm-dir /opt/fnm default "$NODE_MAJOR"; \
+    ln -s "$(readlink -f /opt/fnm/aliases/default)" /opt/node; \
+    /opt/node/bin/node --version
+
+# npm 11+ skips dependency install scripts unless allowed. These five build
+# native modules or place the claude binary; --strict-allow-scripts fails the
+# build if an upstream release adds another, instead of shipping it broken.
+RUN set -eux; \
+    export PATH="/opt/node/bin:$PATH"; \
     npm install -g \
+        --allow-scripts=@anthropic-ai/claude-code,@cloudcli-ai/cloudcli,bcrypt,better-sqlite3,node-pty \
+        --strict-allow-scripts \
         "@cloudcli-ai/cloudcli@${CLOUDCLI_VERSION}" \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"; \
     npm cache clean --force; \
+    cloudcli_dir="$(npm root -g)/@cloudcli-ai/cloudcli"; \
     # Configuration comes from the container environment; an empty .env stops
     # the server logging "No .env file found" on every start.
-    touch "$(npm root -g)/@cloudcli-ai/cloudcli/.env"; \
+    touch "$cloudcli_dir/.env"; \
+    # Always run the server on this Node, whatever `node` a user's PATH picks.
+    printf '#!/bin/sh\nexec /opt/node/bin/node %s "$@"\n' "$(readlink -f /opt/node/bin/cloudcli)" \
+        > /usr/local/bin/cloudcli; \
+    chmod 0755 /usr/local/bin/cloudcli; \
+    # claude is a native binary; expose it without the server's Node on PATH.
+    ln -s "$(readlink -f /opt/node/bin/claude)" /usr/local/bin/claude; \
+    # Fail the build if a native module did not build for this platform.
+    (cd "$cloudcli_dir" && /opt/node/bin/node -e 'for (const m of ["node-pty", "better-sqlite3", "bcrypt"]) require(m)'); \
     cloudcli version; \
-    claude --version
+    claude --version; \
+    # Global npm installs with this Node go to the persisted home volume.
+    install -d /opt/node/etc; \
+    echo 'prefix=/home/dev/.npm-global' > /opt/node/etc/npmrc
 
-# Run as the image's existing "node" user (uid/gid 1000, remapped at start via
-# PUID/PGID), with passwordless sudo so sessions can apt-get install extras.
+# Interactive shells: enable `fnm use` and switch versions on cd (.nvmrc,
+# .node-version), plus shell completions.
 RUN set -eux; \
-    echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node; \
-    chmod 0440 /etc/sudoers.d/node; \
-    install -d -o node -g node /workspace /home/node/.claude /home/node/.cloudcli /home/node/.npm-global
+    { \
+        echo; \
+        echo '# fnm: per-project Node.js versions'; \
+        echo 'eval "$(fnm env --use-on-cd --version-file-strategy=recursive --shell bash)"'; \
+        echo 'eval "$(fnm completions --shell bash)"'; \
+        echo 'eval "$(uv generate-shell-completion bash)"'; \
+    } >> /etc/bash.bashrc
+
+# Runtime user "dev" (uid/gid 1000, remapped at start via PUID/PGID), with
+# passwordless sudo so sessions can apt-get install extras.
+RUN set -eux; \
+    groupadd -g 1000 dev; \
+    useradd -m -u 1000 -g 1000 -s /bin/bash dev; \
+    echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev; \
+    chmod 0440 /etc/sudoers.d/dev; \
+    install -d -o dev -g dev /workspace /home/dev/.claude /home/dev/.cloudcli /home/dev/.npm-global
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/cloudcli-entrypoint.sh
 
+# PATH order: the user's fnm default Node, user-installed tools (uv tool,
+# pipx, npm -g), the system, then the server's Node as a fallback `node`.
 ENV HOST=0.0.0.0 \
     SERVER_PORT=3001 \
     WORKSPACES_ROOT=/workspace \
     # The image is rebuilt with new releases; an in-container self-update
-    # could not write to the root-owned global install anyway.
+    # could not write to the root-owned install anyway.
     DISABLE_AUTOUPDATER=1 \
-    # User-level `npm install -g` lands in the persisted home volume.
-    NPM_CONFIG_PREFIX=/home/node/.npm-global \
-    PATH=/home/node/.npm-global/bin:/home/node/.local/bin:$PATH \
+    # Projects (/workspace) and uv's cache (home volume) are on different
+    # filesystems, so hardlinking always fails; copy without warning.
+    UV_LINK_MODE=copy \
+    PATH=/home/dev/.local/share/fnm/aliases/default/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/node/bin \
     SHELL=/bin/bash \
     LANG=C.UTF-8
+
+# Login shells (`bash -l`, `sudo -iu dev`, Claude Code's shell snapshot) get
+# PATH from /etc/profile, which Debian hard-codes; give them the one above.
+RUN set -eux; \
+    sed -i 's|^  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"$|  PATH="'"$PATH"'"|' /etc/profile; \
+    grep -qF "PATH=\"$PATH\"" /etc/profile
 
 WORKDIR /workspace
 EXPOSE 3001
