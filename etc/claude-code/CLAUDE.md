@@ -1,7 +1,7 @@
 # Container environment
 
 You are running inside the claudecodeui-docker container: Debian 13 (trixie),
-user `dev` with passwordless `sudo`, projects under `/workspace`.
+user `dev` with passwordless `sudo`, projects under `/workspaces`.
 
 ## Node.js: fnm
 
@@ -36,7 +36,7 @@ or install Python packages with apt.
 
 ## What persists
 
-`/home/dev` and `/workspace` survive image updates, so anything installed with
+`/home/dev` and `/workspaces` survive image updates, so anything installed with
 fnm, uv, `uv tool`, or `npm install -g` persists. Packages installed with
 `sudo apt-get install` are lost on the next image update; that's fine for
 something temporary, but tell the user when they'll need it permanently.

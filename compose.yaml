@@ -8,7 +8,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      # Match your host user (run `id -u` / `id -g`) so files in ./workspace
+      # Match your host user (run `id -u` / `id -g`) so files in ./workspaces
       # stay owned by you.
       PUID: 1000
       PGID: 1000
@@ -22,7 +22,7 @@ services:
       # ANTHROPIC_API_KEY: ...
     volumes:
       # Your projects.
-      - ./workspace:/workspace
+      - ./workspaces:/workspaces
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
       - home:/home/dev

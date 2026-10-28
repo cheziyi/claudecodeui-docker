@@ -1,7 +1,7 @@
 # Podman Quadlet unit: the Podman equivalent of compose.yaml.
 #
 # Install (rootless):
-#   mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspace
+#   mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspaces
 #   cp claudecodeui.container claudecodeui-home.volume ~/.config/containers/systemd/
 #   systemctl --user daemon-reload
 #   systemctl --user start claudecodeui
@@ -26,7 +26,7 @@ User=1000:1000
 
 # Your projects. The directory must exist. :Z relabels it for SELinux
 # (Fedora/RHEL); harmless elsewhere.
-Volume=%h/claudecodeui/workspace:/workspace:Z
+Volume=%h/claudecodeui/workspaces:/workspaces:Z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev

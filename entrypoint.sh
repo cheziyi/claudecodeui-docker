@@ -28,7 +28,7 @@ if [ "$(id -u)" = "0" ]; then
         usermod -o -u "$puid" dev
     fi
 
-    mkdir -p "$home/.claude" "$home/.cloudcli" "$home/.npm-global" /workspace
+    mkdir -p "$home/.claude" "$home/.cloudcli" "$home/.npm-global" /workspaces
 
     # The home volume may hold files from an earlier PUID/PGID; re-own it then.
     # (usermod re-owns the home's uid but not its gid, so compare both.)
@@ -38,8 +38,8 @@ if [ "$(id -u)" = "0" ]; then
     # Only claim the workspace root when Docker created it (root-owned) or it
     # is still empty (e.g. the image's own directory under another PUID);
     # never touch ownership of a user's existing project files.
-    if [ "$(stat -c %u /workspace)" = "0" ] || [ -z "$(ls -A /workspace)" ]; then
-        chown "$puid:$pgid" /workspace
+    if [ "$(stat -c %u /workspaces)" = "0" ] || [ -z "$(ls -A /workspaces)" ]; then
+        chown "$puid:$pgid" /workspaces
     fi
 fi
 

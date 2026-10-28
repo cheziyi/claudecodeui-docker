@@ -128,7 +128,7 @@ RUN set -eux; \
     useradd -m -u 1000 -g 1000 -s /bin/bash dev; \
     echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev; \
     chmod 0440 /etc/sudoers.d/dev; \
-    install -d -o dev -g dev /workspace /home/dev/.claude /home/dev/.cloudcli /home/dev/.npm-global
+    install -d -o dev -g dev /workspaces /home/dev/.claude /home/dev/.cloudcli /home/dev/.npm-global
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/cloudcli-entrypoint.sh
 # Managed CLAUDE.md: tells every Claude Code session about fnm, uv and what
@@ -139,11 +139,11 @@ COPY --chmod=0644 etc/claude-code/CLAUDE.md /etc/claude-code/CLAUDE.md
 # pipx, npm -g), the system, then the server's Node as a fallback `node`.
 ENV HOST=0.0.0.0 \
     SERVER_PORT=3001 \
-    WORKSPACES_ROOT=/workspace \
+    WORKSPACES_ROOT=/workspaces \
     # The image is rebuilt with new releases; an in-container self-update
     # could not write to the root-owned install anyway.
     DISABLE_AUTOUPDATER=1 \
-    # Projects (/workspace) and uv's cache (home volume) are on different
+    # Projects (/workspaces) and uv's cache (home volume) are on different
     # filesystems, so hardlinking always fails; copy without warning.
     UV_LINK_MODE=copy \
     PATH=/home/dev/.local/share/fnm/aliases/default/bin:/home/dev/.local/bin:/home/dev/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/node/bin \
@@ -156,7 +156,7 @@ RUN set -eux; \
     sed -i 's|^  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"$|  PATH="'"$PATH"'"|' /etc/profile; \
     grep -qF "PATH=\"$PATH\"" /etc/profile
 
-WORKDIR /workspace
+WORKDIR /workspaces
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

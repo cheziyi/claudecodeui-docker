@@ -24,7 +24,7 @@ Or without Compose:
 ```sh
 docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v "$PWD/workspace:/workspace" \
+  -v "$PWD/workspaces:/workspaces" \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
@@ -36,23 +36,23 @@ unit, the Podman equivalent of `compose.yaml`. systemd runs the container,
 restarts it on failure and starts it at boot. Tested with Podman 4.9.
 
 ```sh
-mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspace
+mkdir -p ~/.config/containers/systemd ~/claudecodeui/workspaces
 cp podman/claudecodeui.container podman/claudecodeui-home.volume ~/.config/containers/systemd/
 systemctl --user daemon-reload
 systemctl --user start claudecodeui
 loginctl enable-linger "$USER"   # keep it running after you log out
 ```
 
-Projects go in `~/claudecodeui/workspace`. To pick up new weekly builds, run
+Projects go in `~/claudecodeui/workspaces`. To pick up new weekly builds, run
 `podman auto-update`, or enable `systemctl --user enable --now podman-auto-update.timer`.
 
 Without systemd, the equivalent one-off command is:
 
 ```sh
-mkdir -p ~/claudecodeui/workspace
+mkdir -p ~/claudecodeui/workspaces
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
-  -v ~/claudecodeui/workspace:/workspace:Z \
+  -v ~/claudecodeui/workspaces:/workspaces:Z \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
@@ -68,7 +68,7 @@ Then:
 2. Sign in to Claude: open the **Shell** tab, run `claude`, and follow the login
    link. Or set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
    `ANTHROPIC_API_KEY` instead (see `compose.yaml`).
-3. Create a project under `/workspace`, or clone one there from the shell, then
+3. Create a project under `/workspaces`, or clone one there from the shell, then
    start a chat.
 
 Claude Code's tools are disabled by default in the UI. Enable the ones you want
@@ -90,12 +90,12 @@ under the gear icon in the sidebar.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PUID` / `PGID` | `1000` | uid/gid the server runs as. Set them to your host user's so files in `/workspace` belong to you. |
+| `PUID` / `PGID` | `1000` | uid/gid the server runs as. Set them to your host user's so files in `/workspaces` belong to you. |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | – | Sets `git config --global user.name` / `user.email` at startup. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | – | Claude subscription token from `claude setup-token`. Lets you skip the interactive login. |
 | `ANTHROPIC_API_KEY` | – | Use API billing instead of a subscription. |
 | `SERVER_PORT` | `3001` | Port the UI listens on inside the container. |
-| `WORKSPACES_ROOT` | `/workspace` | The UI only opens projects under this path. |
+| `WORKSPACES_ROOT` | `/workspaces` | The UI only opens projects under this path. |
 | `TZ` | `Etc/UTC` | Container time zone. |
 
 The CloudCLI server's other settings (for example `API_KEY` and `JWT_SECRET`)
@@ -106,7 +106,7 @@ can be passed as environment variables too. See the
 
 | Path | Holds |
 |---|---|
-| `/workspace` | Your projects. Bind-mount a host directory here. |
+| `/workspaces` | Your projects. Bind-mount a host directory here. |
 | `/home/dev` | Claude Code login, settings, MCP servers and session history (`~/.claude`, `~/.claude.json`), the UI's account database (`~/.cloudcli`), git/gh/ssh config, and the languages and tools you install (below). Keep it on a named volume so it survives image updates. |
 
 ### Node.js and Python versions
