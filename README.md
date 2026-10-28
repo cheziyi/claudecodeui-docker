@@ -219,14 +219,15 @@ docker build -t claudecodeui \
 
 ## Publishing
 
-`.github/workflows/publish.yml` builds multi-arch images and pushes them to
-GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
+`.github/workflows/build.yml` (*Build image*) builds and smoke-tests the image
+on every run, and on `main` also pushes it to GHCR using the repository's
+built-in `GITHUB_TOKEN`. No secrets are needed.
 
 - **Weekly** (Mondays 04:17 UTC): looks up the latest CloudCLI and Claude Code on
   npm, and skips the build if that pair is already published. Otherwise it
   rebuilds without the build cache, which also picks up Debian package updates
   and the latest fnm and uv.
-- **Manual** (*Actions → Publish image → Run workflow*) on `main`: always rebuilds
+- **Manual** (*Actions → Build image → Run workflow*) on `main`: always rebuilds
   without the build cache, e.g. to pick up security fixes. On other branches it
   only builds.
 - **Push to `main`** that changes the image: rebuilds without the build cache
