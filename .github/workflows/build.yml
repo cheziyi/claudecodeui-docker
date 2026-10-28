@@ -21,7 +21,10 @@ on:
         required: false
 
 concurrency:
-  group: build-${{ github.ref }}
+  # Runs that may publish share one group, so they can't move the same tags
+  # out of order. GitHub keeps one pending run per group; a newer one cancels
+  # it, so push release tags one at a time.
+  group: build-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -64,11 +67,6 @@ jobs:
               tag="$GITHUB_REF_NAME" ;;
             *)
               if [ -n "${INPUT_VERSION:-}" ]; then tag="v${INPUT_VERSION#v}"; else tag="$(stable | tail -1)"; fi
-              if [ -z "$tag" ]; then
-                echo "skip=true" >> "$GITHUB_OUTPUT"
-                echo "No release yet; nothing to rebuild." >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
               if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
                 echo "::error::No release tag $tag"
                 exit 1
@@ -98,21 +96,22 @@ jobs:
 
       - name: Resolve upstream versions
         id: versions
-        if: steps.release.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The ranges come from the release being built (upstream.env), so
-          # each release line keeps the upstream majors it was released with.
-          if [ -f upstream.env ]; then
-            # shellcheck source=/dev/null
-            . ./upstream.env
-          else
-            echo "::warning::This release has no upstream.env; using the latest upstream versions."
-          fi
+          # The ranges come from the release being built, so each release line
+          # keeps the upstream majors it was released with.
+          # shellcheck source=/dev/null
+          . ./upstream.env
           # Stable versions matching a range, ascending; prints nothing if none.
           matching() { npx --yes semver@7.7.2 -r "$1" "${@:2}" 2>/dev/null || true; }
-          npm_versions() { npm view "$1" versions --json | jq -r '.[]'; }
-          gh_versions() { git ls-remote --tags --refs "https://github.com/$1" | sed 's#.*refs/tags/##'; }
+          # Up to the `latest` dist-tag, like `npm install`: a package can
+          # publish ahead of it.
+          # shellcheck disable=SC2046 # one version per word
+          npm_versions() { matching "<=$(npm view "$1" dist-tags.latest)" $(npm view "$1" versions --json | jq -r '.[]'); }
+          # Published releases, not tags: a tag can exist hours before its assets.
+          gh_versions() { gh release list -R "$1" --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName'; }
 
           # resolve <name> <output> <range> <versions...>: picks the newest
           # version in the range, and notes a newer one the range keeps out.
@@ -127,7 +126,6 @@ jobs:
             fi
             if [ "$latest" != "$pick" ]; then
               echo "::notice::$name $latest is out but outside $range; staying on $pick. Widen the range in upstream.env to adopt it."
-              echo "$name $latest is available outside \`$range\`." >> "$GITHUB_STEP_SUMMARY"
             fi
             echo "$output=$pick" >> "$GITHUB_OUTPUT"
             echo "- $name $pick (\`$range\`)" >> "$GITHUB_STEP_SUMMARY"
@@ -135,14 +133,14 @@ jobs:
 
           # shellcheck disable=SC2046 # one version per word
           {
-            resolve CloudCLI cloudcli "${CLOUDCLI_RANGE:-*}" $(npm_versions @cloudcli-ai/cloudcli)
-            resolve "Claude Code" claude "${CLAUDE_CODE_RANGE:-*}" $(npm_versions @anthropic-ai/claude-code)
-            resolve fnm fnm "${FNM_RANGE:-*}" $(gh_versions Schniz/fnm)
-            resolve uv uv "${UV_RANGE:-*}" $(gh_versions astral-sh/uv)
+            resolve CloudCLI cloudcli "$CLOUDCLI_RANGE" $(npm_versions @cloudcli-ai/cloudcli)
+            resolve "Claude Code" claude "$CLAUDE_CODE_RANGE" $(npm_versions @anthropic-ai/claude-code)
+            resolve fnm fnm "$FNM_RANGE" $(gh_versions Schniz/fnm)
+            resolve uv uv "$UV_RANGE" $(gh_versions astral-sh/uv)
           }
 
       - name: Log in to GHCR
-        if: env.PUSH == 'true' && steps.release.outputs.skip != 'true'
+        if: env.PUSH == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -153,7 +151,7 @@ jobs:
       # these CloudCLI, Claude Code, fnm and uv versions, read from its labels.
       - name: Check whether upstream changed
         id: existing
-        if: github.event_name == 'schedule' && steps.release.outputs.skip != 'true'
+        if: github.event_name == 'schedule'
         env:
           REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
           WANT: ${{ steps.versions.outputs.cloudcli }} ${{ steps.versions.outputs.claude }} ${{ steps.versions.outputs.fnm }} ${{ steps.versions.outputs.uv }}
@@ -163,29 +161,29 @@ jobs:
             echo "$REF isn't published yet; building it." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          # A multi-platform image gives one config per platform; their labels match.
-          have="$(jq -r '(if has("config") then . else (to_entries | first | .value) end).config.Labels // {}
+          # One config per platform; their labels match.
+          have="$(jq -r 'to_entries[0].value.config.Labels
             | [.["io.github.cheziyi.claudecodeui-docker.cloudcli-version"],
                .["io.github.cheziyi.claudecodeui-docker.claude-code-version"],
                .["io.github.cheziyi.claudecodeui-docker.fnm-version"],
                .["io.github.cheziyi.claudecodeui-docker.uv-version"]]
-            | map(. // "none") | join(" ")' <<<"$config")"
+            | join(" ")' <<<"$config")"
           if [ "$have" = "$WANT" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "$REF already has these versions ($WANT); nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: docker/setup-qemu-action@v4
-        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
 
       - uses: docker/setup-buildx-action@v4
-        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
 
       # amd64 first, loaded into Docker for the smoke test. Publishing runs
       # don't read the GitHub cache: on a fresh runner that makes them full
       # rebuilds, with current apt packages, base image and fnm/uv.
       - name: Build amd64 for the smoke test
-        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -201,7 +199,7 @@ jobs:
           cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
 
       - name: Smoke test
-        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
         env:
           CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
           CLAUDE: ${{ steps.versions.outputs.claude }}
@@ -237,7 +235,7 @@ jobs:
       # Reuses the tested amd64 layers from the builder and adds arm64: from
       # the GitHub cache on PRs, from scratch when publishing.
       - name: Build multi-arch and push
-        if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .

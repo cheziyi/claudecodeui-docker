@@ -53,6 +53,9 @@ AutoUpdate=registry
 
 [Service]
 Restart=always
+# The first start pulls the image (about 1 GB); systemd's default 90s timeout
+# can expire before it finishes.
+TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target
