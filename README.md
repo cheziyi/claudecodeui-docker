@@ -125,6 +125,11 @@ In the shell, fnm switches versions automatically when you `cd` into a project
 with an `.nvmrc` or `.node-version` file. Claude Code's commands use your
 `fnm default`.
 
+Claude Code is told all of this through a system-wide
+[`/etc/claude-code/CLAUDE.md`](etc/claude-code/CLAUDE.md), so sessions use fnm
+and uv without having to work it out. It ships with the image; put your own
+instructions in `~/.claude/CLAUDE.md` or a project's `CLAUDE.md` instead.
+
 Until you set a default, `node` is the image's Node.js 26. The UI server always
 runs on that copy, so switching versions can't break it.
 

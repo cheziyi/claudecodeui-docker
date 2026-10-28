@@ -11,12 +11,14 @@ on:
     paths:
       - Dockerfile
       - entrypoint.sh
+      - etc/**
       - .github/workflows/publish.yml
   # Build-only check for changes to the image.
   pull_request:
     paths:
       - Dockerfile
       - entrypoint.sh
+      - etc/**
       - .github/workflows/publish.yml
 
 concurrency:

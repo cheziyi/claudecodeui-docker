@@ -131,6 +131,9 @@ RUN set -eux; \
     install -d -o dev -g dev /workspace /home/dev/.claude /home/dev/.cloudcli /home/dev/.npm-global
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/cloudcli-entrypoint.sh
+# Managed CLAUDE.md: tells every Claude Code session about fnm, uv and what
+# persists. Image-owned, so it updates with the image.
+COPY --chmod=0644 etc/claude-code/CLAUDE.md /etc/claude-code/CLAUDE.md
 
 # PATH order: the user's fnm default Node, user-installed tools (uv tool,
 # pipx, npm -g), the system, then the server's Node as a fallback `node`.
