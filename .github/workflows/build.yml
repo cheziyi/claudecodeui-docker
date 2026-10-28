@@ -101,13 +101,45 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          cloudcli="$(npm view @cloudcli-ai/cloudcli version)"
-          claude="$(npm view @anthropic-ai/claude-code version)"
+          # The ranges come from the release being built (upstream.env), so
+          # each release line keeps the upstream majors it was released with.
+          if [ -f upstream.env ]; then
+            # shellcheck source=/dev/null
+            . ./upstream.env
+          else
+            echo "::warning::This release has no upstream.env; using the latest upstream versions."
+          fi
+          # Stable versions matching a range, ascending; prints nothing if none.
+          matching() { npx --yes semver@7.7.2 -r "$1" "${@:2}" 2>/dev/null || true; }
+          npm_versions() { npm view "$1" versions --json | jq -r '.[]'; }
+          gh_versions() { git ls-remote --tags --refs "https://github.com/$1" | sed 's#.*refs/tags/##'; }
+
+          # resolve <name> <output> <range> <versions...>: picks the newest
+          # version in the range, and notes a newer one the range keeps out.
+          resolve() {
+            local name="$1" output="$2" range="$3" pick latest
+            shift 3
+            pick="$(matching "$range" "$@" | tail -1)"
+            latest="$(matching '*' "$@" | tail -1)"
+            if [ -z "$pick" ]; then
+              echo "::error::No $name release matches $range in upstream.env"
+              exit 1
+            fi
+            if [ "$latest" != "$pick" ]; then
+              echo "::notice::$name $latest is out but outside $range; staying on $pick. Widen the range in upstream.env to adopt it."
+              echo "$name $latest is available outside \`$range\`." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "$output=$pick" >> "$GITHUB_OUTPUT"
+            echo "- $name $pick (\`$range\`)" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          # shellcheck disable=SC2046 # one version per word
           {
-            echo "cloudcli=$cloudcli"
-            echo "claude=$claude"
-          } >> "$GITHUB_OUTPUT"
-          echo "CloudCLI $cloudcli, Claude Code $claude" >> "$GITHUB_STEP_SUMMARY"
+            resolve CloudCLI cloudcli "${CLOUDCLI_RANGE:-*}" $(npm_versions @cloudcli-ai/cloudcli)
+            resolve "Claude Code" claude "${CLAUDE_CODE_RANGE:-*}" $(npm_versions @anthropic-ai/claude-code)
+            resolve fnm fnm "${FNM_RANGE:-*}" $(gh_versions Schniz/fnm)
+            resolve uv uv "${UV_RANGE:-*}" $(gh_versions astral-sh/uv)
+          }
 
       - name: Log in to GHCR
         if: env.PUSH == 'true' && steps.release.outputs.skip != 'true'
@@ -118,13 +150,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Weekly runs skip when the published build of this release already has
-      # these CloudCLI and Claude Code versions, read back from its labels.
+      # these CloudCLI, Claude Code, fnm and uv versions, read from its labels.
       - name: Check whether upstream changed
         id: existing
         if: github.event_name == 'schedule' && steps.release.outputs.skip != 'true'
         env:
           REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
-          WANT: ${{ steps.versions.outputs.cloudcli }} ${{ steps.versions.outputs.claude }}
+          WANT: ${{ steps.versions.outputs.cloudcli }} ${{ steps.versions.outputs.claude }} ${{ steps.versions.outputs.fnm }} ${{ steps.versions.outputs.uv }}
         run: |
           set -euo pipefail
           if ! config="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null)"; then
@@ -132,11 +164,15 @@ jobs:
             exit 0
           fi
           # A multi-platform image gives one config per platform; their labels match.
-          have="$(jq -r '(if has("config") then . else (to_entries | first | .value) end).config.Labels
-            | "\(.["io.github.cheziyi.claudecodeui-docker.cloudcli-version"]) \(.["io.github.cheziyi.claudecodeui-docker.claude-code-version"])"' <<<"$config")"
+          have="$(jq -r '(if has("config") then . else (to_entries | first | .value) end).config.Labels // {}
+            | [.["io.github.cheziyi.claudecodeui-docker.cloudcli-version"],
+               .["io.github.cheziyi.claudecodeui-docker.claude-code-version"],
+               .["io.github.cheziyi.claudecodeui-docker.fnm-version"],
+               .["io.github.cheziyi.claudecodeui-docker.uv-version"]]
+            | map(. // "none") | join(" ")' <<<"$config")"
           if [ "$have" = "$WANT" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "$REF already has CloudCLI and Claude Code $WANT; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "$REF already has these versions ($WANT); nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: docker/setup-qemu-action@v4
@@ -160,10 +196,17 @@ jobs:
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
+            FNM_VERSION=${{ steps.versions.outputs.fnm }}
+            UV_VERSION=${{ steps.versions.outputs.uv }}
           cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
 
       - name: Smoke test
         if: steps.release.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        env:
+          CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
+          CLAUDE: ${{ steps.versions.outputs.claude }}
+          FNM: ${{ steps.versions.outputs.fnm }}
+          UV: ${{ steps.versions.outputs.uv }}
         run: |
           set -euo pipefail
           # A non-default PUID exercises the entrypoint's user remapping.
@@ -178,14 +221,16 @@ jobs:
           done
           echo "health: $status"
           [ "$status" = healthy ]
-          docker exec -u dev smoke bash -lc '
-            set -e
+          # The image must contain exactly the versions resolved above.
+          docker exec -u dev -e CLOUDCLI -e CLAUDE -e FNM -e UV smoke bash -lc '
+            set -ex
             [ "$(id -u):$(id -g)" = 1234:1234 ]
             [ "$(stat -c %u /home/dev)" = 1234 ]
             node --version
-            fnm --version
-            uv --version
-            claude --version
+            [ "$(cloudcli version 2>/dev/null | tail -1)" = "$CLOUDCLI" ]
+            [ "$(claude --version)" = "$CLAUDE (Claude Code)" ]
+            [ "$(fnm --version)" = "fnm $FNM" ]
+            [[ "$(uv --version)" == "uv $UV "* ]]
             gh --version | head -1
           '
 
@@ -201,6 +246,8 @@ jobs:
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
+            FNM_VERSION=${{ steps.versions.outputs.fnm }}
+            UV_VERSION=${{ steps.versions.outputs.uv }}
           tags: ${{ steps.release.outputs.tags }}
           labels: |
             org.opencontainers.image.title=claudecodeui-docker
@@ -210,5 +257,7 @@ jobs:
             org.opencontainers.image.revision=${{ steps.release.outputs.revision }}
             io.github.cheziyi.claudecodeui-docker.cloudcli-version=${{ steps.versions.outputs.cloudcli }}
             io.github.cheziyi.claudecodeui-docker.claude-code-version=${{ steps.versions.outputs.claude }}
+            io.github.cheziyi.claudecodeui-docker.fnm-version=${{ steps.versions.outputs.fnm }}
+            io.github.cheziyi.claudecodeui-docker.uv-version=${{ steps.versions.outputs.uv }}
           cache-from: ${{ env.PUSH != 'true' && 'type=gha' || '' }}
           cache-to: type=gha,mode=max

@@ -54,21 +54,25 @@ RUN set -eux; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
     rm -rf /var/lib/apt/lists/*
 
-# fnm (Node.js versions) and uv (Python versions, packages and tools), latest
-# releases. Scheduled and manual CI builds skip the layer cache, so they pick
-# up new ones. uv is checked against the sha256 file it publishes with each
+# fnm (Node.js versions) and uv (Python versions, packages and tools). CI
+# passes the newest releases within upstream.env's ranges; "latest" keeps local
+# builds simple. uv is checked against the sha256 file it publishes with each
 # release; fnm publishes none.
+ARG FNM_VERSION=latest
+ARG UV_VERSION=latest
 RUN set -eux; \
     case "$TARGETARCH" in \
         amd64) fnm_asset=fnm-linux.zip; uv_asset=uv-x86_64-unknown-linux-gnu ;; \
         arm64) fnm_asset=fnm-arm64.zip; uv_asset=uv-aarch64-unknown-linux-gnu ;; \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
+    release() { if [ "$2" = latest ]; then echo "https://github.com/$1/releases/latest/download"; else echo "https://github.com/$1/releases/download/$2"; fi; }; \
+    fnm_tag="$FNM_VERSION"; [ "$fnm_tag" = latest ] || fnm_tag="v${FNM_VERSION#v}"; \
     cd /tmp; \
-    curl -fsSL -o fnm.zip "https://github.com/Schniz/fnm/releases/latest/download/$fnm_asset"; \
+    curl -fsSL -o fnm.zip "$(release Schniz/fnm "$fnm_tag")/$fnm_asset"; \
     unzip -q fnm.zip -d /usr/local/bin; \
     chmod 0755 /usr/local/bin/fnm; \
-    uv_url="https://github.com/astral-sh/uv/releases/latest/download/$uv_asset.tar.gz"; \
+    uv_url="$(release astral-sh/uv "$UV_VERSION")/$uv_asset.tar.gz"; \
     curl -fsSL -o "$uv_asset.tar.gz" "$uv_url"; \
     curl -fsSL "$uv_url.sha256" | sha256sum -c -; \
     tar -xzf "$uv_asset.tar.gz" --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \

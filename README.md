@@ -203,7 +203,11 @@ environment variables, the user, the tools that come with it.
 - **Patch** (`1.2.1`): fixes.
 
 Each tag points at the newest build of its line, so every tag except a digest
-gets the weekly upstream and security updates:
+gets the weekly upstream and security updates. Those updates stay within the
+upstream majors the release line was published with (see
+[`upstream.env`](upstream.env)), so a new CloudCLI, Claude Code or fnm major
+never reaches you through a weekly rebuild. It arrives only with a release of this
+image, and as a new major here if it breaks existing setups.
 
 | Tag | Follows |
 |---|---|
@@ -213,7 +217,7 @@ gets the weekly upstream and security updates:
 | `latest` | the newest release, including the next major |
 
 To freeze an exact build, pin its digest (`…:1@sha256:…`). To see which
-CloudCLI and Claude Code a build contains:
+CloudCLI, Claude Code, fnm and uv a build contains:
 
 ```sh
 docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui-docker:1
@@ -232,11 +236,13 @@ passwordless `sudo` inside the container. Treat port 3001 like SSH access:
 ## Building locally
 
 ```sh
-docker build -t claudecodeui .
-# Pin versions:
+docker build -t claudecodeui .   # latest CloudCLI and Claude Code
+# Pin versions (CI resolves them from upstream.env):
 docker build -t claudecodeui \
   --build-arg CLOUDCLI_VERSION=1.37.6 \
-  --build-arg CLAUDE_CODE_VERSION=2.1.312 .
+  --build-arg CLAUDE_CODE_VERSION=2.1.312 \
+  --build-arg FNM_VERSION=1.39.0 \
+  --build-arg UV_VERSION=0.13.6 .
 ```
 
 ## Releasing and publishing
@@ -260,13 +266,30 @@ tag, never `1`, `1.3` or `latest`.
   it's the highest release in that line, so a patch to an older line can't take
   them backwards.
 - **Weekly** (Mondays 04:17 UTC): rebuilds the latest release when CloudCLI or
-  Claude Code has a new version, and skips otherwise. Older release lines aren't
-  rebuilt.
+  Claude Code has a new version within that release's ranges, and skips
+  otherwise. Older release lines aren't rebuilt.
 - **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
   latest release, or the version you enter, even if nothing upstream changed,
   e.g. to pick up security fixes.
 
 Pushes to `main` don't publish: changes reach users with the next release.
+
+### Upstream majors
+
+[`upstream.env`](upstream.env) sets which CloudCLI, Claude Code, fnm and uv
+versions a release line accepts, as semver ranges (`^1` means any 1.x). Every
+build installs the newest release inside each range: CloudCLI and Claude Code
+from npm, fnm and uv from their GitHub releases. When a newer version is out
+that a range keeps out, the run's summary says so (e.g. "CloudCLI 2.0.0 is
+available outside `^1`").
+
+uv is set to `^0`, any 0.x. uv's minor releases can change its behaviour, but
+rarely in ways that affect this image's setup, so they come with the weekly
+rebuilds; only a uv 1.0 waits for a PR.
+
+To adopt it, widen the range in a PR, and let the PR's smoke test and your own
+testing decide the release: a new major of this image if it breaks existing
+setups (changed settings or data, removed features), a minor otherwise.
 
 Every run first builds amd64 and smoke-tests it: it starts the container with a
 non-default `PUID`, waits for the healthcheck, and runs `node`, `fnm`, `uv`,
