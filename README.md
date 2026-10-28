@@ -6,18 +6,19 @@ installed. Start the container, open the browser, log in to Claude, and start co
 from your desktop, or from your phone.
 
 ```
-ghcr.io/cheziyi/claudecodeui-docker:1
+ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Built for `linux/amd64` and `linux/arm64`. Releases are versioned on their own
-(see [Versions and tags](#versions-and-tags)), and the latest release is rebuilt
-weekly when CloudCLI or Claude Code ships a new version.
+(see [Versions and tags](#versions-and-tags)), and the newest release is rebuilt
+daily when CloudCLI, Claude Code, fnm or uv ships a new version.
 
 ## Quick start
 
 ```sh
 mkdir -p ~/claudecodeui && cd ~/claudecodeui
 curl -O https://raw.githubusercontent.com/cheziyi/claudecodeui-docker/main/compose.yaml
+grep -qs '^PUID=' .env || printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" >> .env
 docker compose up -d
 ```
 
@@ -28,22 +29,12 @@ docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
   -v ~/claudecodeui/workspaces:/workspaces \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:1
+  ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Either way, projects go in `~/claudecodeui/workspaces` and everything else in
 the `claudecodeui-home` volume, so you can switch between Compose and
-`docker run` without losing anything. The Podman setup below uses the same
-folder and volume name, but Podman keeps its volumes separate from Docker's:
-switching between Docker and Podman keeps your projects, not the home volume.
-To bring it along, copy it across. Use the Podman unit's user namespace, or the
-files land under a uid the container's `dev` user can't write to:
-
-```sh
-docker run --rm -v claudecodeui-home:/h debian:trixie-slim tar -C /h -c . \
-  | podman run --rm -i --userns keep-id:uid=1000,gid=1000 --user 0:0 \
-      -v claudecodeui-home:/h debian:trixie-slim tar -C /h -x
-```
+`docker run` without losing anything.
 
 ### Podman
 
@@ -59,8 +50,10 @@ systemctl --user start claudecodeui
 loginctl enable-linger "$USER"   # keep it running after you log out
 ```
 
-Projects go in `~/claudecodeui/workspaces`. To pick up new weekly builds, run
-`podman auto-update`, or enable `systemctl --user enable --now podman-auto-update.timer`.
+Projects go in `~/claudecodeui/workspaces`, as with Docker, but Podman keeps its
+volumes apart from Docker's, so it starts with a fresh home volume. To pick up
+new builds, run `podman auto-update`, or have it run daily with
+`systemctl --user enable --now podman-auto-update.timer`.
 
 Without systemd, the equivalent one-off command is:
 
@@ -68,9 +61,9 @@ Without systemd, the equivalent one-off command is:
 mkdir -p ~/claudecodeui/workspaces
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
-  -v ~/claudecodeui/workspaces:/workspaces:Z \
+  -v ~/claudecodeui/workspaces:/workspaces:z \
   -v claudecodeui-home:/home/dev \
-  ghcr.io/cheziyi/claudecodeui-docker:1
+  ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
@@ -83,7 +76,8 @@ Then:
    visitor gets to create it, so do this right away.
 2. Sign in to Claude: open the **Shell** tab, run `claude`, and follow the login
    link. Or set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
-   `ANTHROPIC_API_KEY` instead (see `compose.yaml`).
+   `ANTHROPIC_API_KEY` instead (see `compose.yaml`, or the Podman unit for
+   keeping it in a Podman secret).
 3. Create a project under `/workspaces`, or clone one there from the shell, then
    start a chat.
 
@@ -154,7 +148,7 @@ directories and is gone after an update. To keep system packages, build your own
 image on top of this one:
 
 ```dockerfile
-FROM ghcr.io/cheziyi/claudecodeui-docker:1
+FROM ghcr.io/cheziyi/claudecodeui:1
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 ```
@@ -202,12 +196,14 @@ environment variables, the user, the tools that come with it.
 - **Minor** (`1.3.0`): new features that work with your existing setup.
 - **Patch** (`1.2.1`): fixes.
 
-Each tag points at the newest build of its line, so every tag except a digest
-gets the weekly upstream and security updates. Those updates stay within the
-upstream majors the release line was published with (see
-[`upstream.env`](upstream.env)), so a new CloudCLI, Claude Code or fnm major
-never reaches you through a weekly rebuild. It arrives only with a release of this
+The daily rebuilds update the newest release in place, picking up current
+Debian packages along the way. They stay within the upstream majors that
+release was published with (see [`upstream.env`](upstream.env)), so a new
+CloudCLI, Claude Code, fnm or uv major arrives only with a release of this
 image, and as a new major here if it breaks existing setups.
+
+Only the newest release is rebuilt. Once `2.0.0` is out, `1` stops getting
+updates; move to `2` after reading its release notes.
 
 | Tag | Follows |
 |---|---|
@@ -220,7 +216,7 @@ To freeze an exact build, pin its digest (`…:1@sha256:…`). To see which
 CloudCLI, Claude Code, fnm and uv a build contains:
 
 ```sh
-docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui-docker:1
+docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui:1
 ```
 
 ## Security
@@ -236,7 +232,7 @@ passwordless `sudo` inside the container. Treat port 3001 like SSH access:
 ## Building locally
 
 ```sh
-docker build -t claudecodeui .   # latest CloudCLI and Claude Code
+docker build -t claudecodeui .   # latest upstream versions
 # Pin versions (CI resolves them from upstream.env):
 docker build -t claudecodeui \
   --build-arg CLOUDCLI_VERSION=1.37.6 \
@@ -265,38 +261,27 @@ tag, never `1`, `1.3` or `latest`.
 - **Release tags**: publish that release. `1.2`, `1` and `latest` move only if
   it's the highest release in that line, so a patch to an older line can't take
   them backwards.
-- **Weekly** (Mondays 04:17 UTC): rebuilds the latest release when CloudCLI or
-  Claude Code has a new version within that release's ranges, and skips
-  otherwise. Older release lines aren't rebuilt.
+- **Daily** (04:17 UTC): rebuilds the newest release when an upstream
+  version within its ranges changed, and skips otherwise.
 - **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
   latest release, or the version you enter, even if nothing upstream changed,
   e.g. to pick up security fixes.
 
 Pushes to `main` don't publish: changes reach users with the next release.
+Every run smoke-tests the amd64 build before the multi-arch build reuses its
+layers, so the published image is the one that passed.
 
 ### Upstream majors
 
 [`upstream.env`](upstream.env) sets which CloudCLI, Claude Code, fnm and uv
 versions a release line accepts, as semver ranges (`^1` means any 1.x). Every
-build installs the newest release inside each range: CloudCLI and Claude Code
-from npm, fnm and uv from their GitHub releases. When a newer version is out
-that a range keeps out, the run's summary says so (e.g. "CloudCLI 2.0.0 is
-available outside `^1`").
-
-uv is set to `^0`, any 0.x. uv's minor releases can change its behaviour, but
-rarely in ways that affect this image's setup, so they come with the weekly
-rebuilds; only a uv 1.0 waits for a PR.
+build installs the newest version inside each range: CloudCLI and Claude Code
+up to their npm `latest` tag, fnm and uv from their published GitHub releases.
+When a newer version is out that a range keeps out, the run notes it.
 
 To adopt it, widen the range in a PR, and let the PR's smoke test and your own
 testing decide the release: a new major of this image if it breaks existing
 setups (changed settings or data, removed features), a minor otherwise.
-
-Every run first builds amd64 and smoke-tests it: it starts the container with a
-non-default `PUID`, waits for the healthcheck, and runs `node`, `fnm`, `uv`,
-`claude` and `gh` as `dev`. The multi-arch build then reuses those tested amd64
-layers, so the published image is the one that passed. Builds that publish
-don't use the build cache, so they always get current Debian packages, the base
-image and the latest fnm and uv.
 
 ## License
 

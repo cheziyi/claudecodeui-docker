@@ -1,6 +1,6 @@
 services:
   claudecodeui:
-    image: ghcr.io/cheziyi/claudecodeui-docker:1
+    image: ghcr.io/cheziyi/claudecodeui:1
     # Or build it yourself from this repository:
     # build: .
     container_name: claudecodeui
@@ -8,10 +8,10 @@ services:
     ports:
       - "3001:3001"
     environment:
-      # Match your host user (run `id -u` / `id -g`) so files in ./workspaces
-      # stay owned by you.
-      PUID: 1000
-      PGID: 1000
+      # Your host user, so files in ./workspaces stay owned by you. Read from
+      # .env next to this file, which the README's quick start writes.
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
       TZ: Etc/UTC
       # Optional: commit identity for git inside the container.
       # GIT_USER_NAME: Your Name
@@ -30,6 +30,6 @@ services:
 
 volumes:
   home:
-    # A fixed name, shared with the `docker run` example and the Podman unit,
-    # so switching between them (or renaming this folder) keeps your data.
+    # A fixed name, shared with the `docker run` example, so switching between
+    # them (or renaming this folder) keeps your data.
     name: claudecodeui-home

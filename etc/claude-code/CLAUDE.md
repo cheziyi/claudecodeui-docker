@@ -1,6 +1,6 @@
 # Container environment
 
-You are running inside the claudecodeui-docker container: Debian 13 (trixie),
+You are running inside the claudecodeui container: Debian 13 (trixie),
 user `dev` with passwordless `sudo`, projects under `/workspaces`.
 
 ## Node.js: fnm
