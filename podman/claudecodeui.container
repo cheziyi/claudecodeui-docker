@@ -40,9 +40,7 @@ Environment=TZ=Etc/UTC
 # in an env file and point to it here.
 #EnvironmentFile=%h/.config/claudecodeui.env
 
-HealthCmd=curl -fsS http://127.0.0.1:3001/health
-HealthInterval=30s
-HealthStartPeriod=30s
+# The healthcheck comes from the image's HEALTHCHECK, which follows SERVER_PORT.
 
 # Lets `podman auto-update` (or podman-auto-update.timer) pull new builds.
 AutoUpdate=registry

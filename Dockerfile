@@ -6,14 +6,14 @@
 # versions, which live in the persisted home volume and survive image updates.
 FROM debian:trixie-slim
 
-# "latest" keeps local builds simple; CI passes exact versions so every
-# published tag maps to a known pair of upstream releases.
-ARG CLOUDCLI_VERSION=latest
-ARG CLAUDE_CODE_VERSION=latest
 # Node.js major that runs the CloudCLI server itself, separate from any
 # versions users install with fnm. Pinned to the current LTS so a new major
 # (and its native-module ABI) is adopted deliberately.
 ARG NODE_MAJOR=26
+# fnm and uv releases, pinned and checksummed per architecture. To update, bump
+# the version and replace the sha256 of each release asset.
+ARG FNM_VERSION=1.39.0
+ARG UV_VERSION=0.13.6
 ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -61,16 +61,26 @@ RUN set -eux; \
 # fnm (Node.js versions) and uv (Python versions, packages and tools).
 RUN set -eux; \
     case "$TARGETARCH" in \
-        amd64) fnm_asset=fnm-linux.zip; uv_asset=uv-x86_64-unknown-linux-gnu ;; \
-        arm64) fnm_asset=fnm-arm64.zip; uv_asset=uv-aarch64-unknown-linux-gnu ;; \
+        amd64) \
+            fnm_asset=fnm-linux.zip; \
+            fnm_sha256=7807664f39d39fc518da1c35ba0181e4b3267603c4b1dedeb4b5fc6ae440a224; \
+            uv_asset=uv-x86_64-unknown-linux-gnu; \
+            uv_sha256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645 ;; \
+        arm64) \
+            fnm_asset=fnm-arm64.zip; \
+            fnm_sha256=4eaff58b2c5bf30d0934027572dd0b5bbb60d2a1af309230b53662d4b1d45599; \
+            uv_asset=uv-aarch64-unknown-linux-gnu; \
+            uv_sha256=229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d ;; \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/fnm.zip "https://github.com/Schniz/fnm/releases/latest/download/$fnm_asset"; \
+    curl -fsSL -o /tmp/fnm.zip "https://github.com/Schniz/fnm/releases/download/v$FNM_VERSION/$fnm_asset"; \
+    echo "$fnm_sha256  /tmp/fnm.zip" | sha256sum -c -; \
     unzip -q /tmp/fnm.zip -d /usr/local/bin; \
     chmod 0755 /usr/local/bin/fnm; \
-    rm /tmp/fnm.zip; \
-    curl -fsSL "https://github.com/astral-sh/uv/releases/latest/download/$uv_asset.tar.gz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \
+    curl -fsSL -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$uv_asset.tar.gz"; \
+    echo "$uv_sha256  /tmp/uv.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \
+    rm /tmp/fnm.zip /tmp/uv.tar.gz; \
     fnm --version; \
     uv --version
 
@@ -80,6 +90,12 @@ RUN set -eux; \
     fnm --fnm-dir /opt/fnm default "$NODE_MAJOR"; \
     ln -s "$(readlink -f /opt/fnm/aliases/default)" /opt/node; \
     /opt/node/bin/node --version
+
+# "latest" keeps local builds simple; CI passes exact versions so every
+# published tag maps to a known pair of upstream releases. Declared here, not
+# at the top, so a version bump only invalidates the layers from here on.
+ARG CLOUDCLI_VERSION=latest
+ARG CLAUDE_CODE_VERSION=latest
 
 # npm 11+ skips dependency install scripts unless allowed. These five build
 # native modules or place the claude binary; --strict-allow-scripts fails the
@@ -104,8 +120,8 @@ RUN set -eux; \
     ln -s "$(readlink -f /opt/node/bin/claude)" /usr/local/bin/claude; \
     # Fail the build if a native module did not build for this platform.
     (cd "$cloudcli_dir" && /opt/node/bin/node -e 'for (const m of ["node-pty", "better-sqlite3", "bcrypt"]) require(m)'); \
-    cloudcli version; \
-    claude --version; \
+    /usr/local/bin/cloudcli version; \
+    /usr/local/bin/claude --version; \
     # Global npm installs with this Node go to the persisted home volume.
     install -d /opt/node/etc; \
     echo 'prefix=/home/dev/.npm-global' > /opt/node/etc/npmrc
@@ -163,4 +179,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${SERVER_PORT}/health" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cloudcli-entrypoint.sh"]
-CMD ["cloudcli", "start"]
+# Absolute path: ~/.npm-global/bin and the user's fnm Node come first on PATH,
+# so a user-installed cloudcli must not replace the image's pinned server.
+CMD ["/usr/local/bin/cloudcli", "start"]

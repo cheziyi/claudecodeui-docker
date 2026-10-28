@@ -146,8 +146,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends postgresql-clie
 ### GitHub access
 
 From the UI's shell, run `gh auth login` once. The token is stored in the home
-volume, and the container configures `git` to use it for `https://` remotes
-on every start. For SSH remotes, put a key in `~/.ssh` instead.
+volume, and on the next start the container configures `git` to use it for
+`https://` remotes. For SSH remotes, put a key in `~/.ssh` instead.
 
 ### Shell access from the host
 
@@ -162,8 +162,8 @@ docker exec -it -u dev claudecodeui bash
 
 If you'd rather not start the container as root (for example under rootless
 Docker or Kubernetes), run it with `--user <uid>:<gid>`. The entrypoint then
-skips the `PUID`/`PGID` remapping, so make sure the volumes are writable by
-that uid.
+skips the `PUID`/`PGID` remapping and uses `/home/dev` as the home directory
+whatever the uid, so make sure both volumes are writable by that uid.
 
 ## Updating
 
@@ -178,7 +178,8 @@ update mechanism.
 Tags:
 
 - `latest`: newest build
-- `<cloudcli>-claude<claude-code>`, e.g. `1.37.6-claude2.1.312`: a specific pair, for pinning
+- `<cloudcli>-claude<claude-code>`, e.g. `1.37.6-claude2.1.312`: the first build of a
+  specific pair. It never changes after it's published, so it's safe to pin.
 - `<cloudcli>`, e.g. `1.37.6`: newest build of that CloudCLI release
 
 ## Security
@@ -208,8 +209,9 @@ GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
 
 - **Weekly** (Mondays 04:17 UTC): looks up the latest CloudCLI and Claude Code on
   npm, and skips the build if that pair is already published.
-- **Manual** (*Actions → Publish image → Run workflow*): always rebuilds, e.g. to
-  pick up base-image security fixes.
+- **Manual** (*Actions → Publish image → Run workflow*) on `main`: always rebuilds
+  without the build cache, e.g. to pick up security fixes. On other branches it
+  only builds.
 - **Push to `main`** that changes the image: rebuilds and publishes.
 - **Pull requests**: build only, no push.
 

@@ -1,7 +1,8 @@
 name: Publish image
 
 on:
-  # Manual runs always build and push, e.g. to pick up base-image security fixes.
+  # Manual runs on main always rebuild from scratch and push, e.g. to pick up
+  # security fixes. On other branches they only build.
   workflow_dispatch:
   # Weekly; skipped when this CloudCLI + Claude Code pair is already published.
   schedule:
@@ -32,7 +33,8 @@ jobs:
       contents: read
       packages: write
     env:
-      PUSH: ${{ github.event_name != 'pull_request' }}
+      # Only main publishes, so a manual run on a branch can't overwrite latest.
+      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,15 +60,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Skip if already published
+      # The version-pair tag is written once and never moves, so it's safe to
+      # pin. Scheduled runs skip entirely when it exists; other runs still
+      # publish latest and <cloudcli>, just not the pair tag.
+      - name: Check for an existing build of this pair
         id: existing
-        if: github.event_name == 'schedule'
+        if: env.PUSH == 'true'
         env:
           REF: ${{ steps.versions.outputs.image }}:${{ steps.versions.outputs.tag }}
         run: |
           if docker buildx imagetools inspect "$REF" >/dev/null 2>&1; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "$REF is already published; leaving that tag as is." >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
       - uses: docker/setup-qemu-action@v4
@@ -83,7 +93,7 @@ jobs:
           images: ${{ steps.versions.outputs.image }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ steps.versions.outputs.tag }}
+            type=raw,value=${{ steps.versions.outputs.tag }},enable=${{ steps.existing.outputs.exists != 'true' }}
             type=raw,value=${{ steps.versions.outputs.cloudcli }}
           labels: |
             org.opencontainers.image.title=claudecodeui-docker
@@ -97,6 +107,10 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUSH == 'true' }}
+          # Manual runs skip the layer cache and re-pull the base, so apt
+          # packages and the base image are actually refreshed.
+          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
+          pull: ${{ github.event_name == 'workflow_dispatch' }}
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
