@@ -175,8 +175,15 @@ RUN set -eux; \
 WORKDIR /workspaces
 EXPOSE 3001
 
+# A script rather than an inline command so the Podman unit can reuse it:
+# Podman ignores HEALTHCHECK in OCI-format images, which is what CI publishes.
+RUN set -eux; \
+    printf '#!/bin/sh\nexec curl -fsS -o /dev/null "http://127.0.0.1:${SERVER_PORT:-3001}/health"\n' \
+        > /usr/local/bin/cloudcli-healthcheck; \
+    chmod 0755 /usr/local/bin/cloudcli-healthcheck
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${SERVER_PORT}/health" || exit 1
+    CMD ["/usr/local/bin/cloudcli-healthcheck"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cloudcli-entrypoint.sh"]
 # Absolute path: ~/.npm-global/bin and the user's fnm Node come first on PATH,

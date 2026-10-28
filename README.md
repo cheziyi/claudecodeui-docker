@@ -31,8 +31,18 @@ docker run -d --name claudecodeui -p 3001:3001 \
 ```
 
 Either way, projects go in `~/claudecodeui/workspaces` and everything else in
-the `claudecodeui-home` volume, the same as the Podman setup below, so you can
-switch between them without losing anything.
+the `claudecodeui-home` volume, so you can switch between Compose and
+`docker run` without losing anything. The Podman setup below uses the same
+folder and volume name, but Podman keeps its volumes separate from Docker's:
+switching between Docker and Podman keeps your projects, not the home volume.
+To bring it along, copy it across. Use the Podman unit's user namespace, or the
+files land under a uid the container's `dev` user can't write to:
+
+```sh
+docker run --rm -v claudecodeui-home:/h debian:trixie-slim tar -C /h -c . \
+  | podman run --rm -i --userns keep-id:uid=1000,gid=1000 --user 0:0 \
+      -v claudecodeui-home:/h debian:trixie-slim tar -C /h -x
+```
 
 ### Podman
 
