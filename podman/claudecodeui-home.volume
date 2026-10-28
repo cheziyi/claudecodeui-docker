@@ -1,0 +1,3 @@
+# Named volume for /home/dev, used by claudecodeui.container.
+[Volume]
+VolumeName=claudecodeui-home

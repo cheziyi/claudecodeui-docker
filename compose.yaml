@@ -1,0 +1,35 @@
+services:
+  claudecodeui:
+    image: ghcr.io/cheziyi/claudecodeui-docker:latest
+    # Or build it yourself from this repository:
+    # build: .
+    container_name: claudecodeui
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      # Match your host user (run `id -u` / `id -g`) so files in ./workspaces
+      # stay owned by you.
+      PUID: 1000
+      PGID: 1000
+      TZ: Etc/UTC
+      # Optional: commit identity for git inside the container.
+      # GIT_USER_NAME: Your Name
+      # GIT_USER_EMAIL: you@example.com
+      # Optional: skip the interactive login. Use ONE of these. A long-lived
+      # subscription token comes from running `claude setup-token`.
+      # CLAUDE_CODE_OAUTH_TOKEN: ...
+      # ANTHROPIC_API_KEY: ...
+    volumes:
+      # Your projects, next to this file (~/claudecodeui/workspaces if you
+      # followed the README).
+      - ./workspaces:/workspaces
+      # Claude Code login, settings and sessions, the UI's accounts database,
+      # git/gh/ssh config and shell history. Survives image updates.
+      - home:/home/dev
+
+volumes:
+  home:
+    # A fixed name, shared with the `docker run` example and the Podman unit,
+    # so switching between them (or renaming this folder) keeps your data.
+    name: claudecodeui-home
