@@ -144,7 +144,10 @@ RUN set -eux; \
 
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/cloudcli-entrypoint.sh
 # Managed CLAUDE.md: tells every Claude Code session about fnm, uv and what
-# persists. Image-owned, so it updates with the image.
+# persists. Image-owned, so it updates with the image. The directory is made
+# first: COPY --chmod would also apply 0644 to the parent it creates, leaving
+# it unsearchable for "dev".
+RUN install -d -m 0755 /etc/claude-code
 COPY --chmod=0644 etc/claude-code/CLAUDE.md /etc/claude-code/CLAUDE.md
 
 # PATH order: the user's fnm default Node, user-installed tools (uv tool,
