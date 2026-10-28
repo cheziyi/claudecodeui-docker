@@ -18,7 +18,7 @@ weekly when CloudCLI, Claude Code, fnm or uv ships a new version.
 ```sh
 mkdir -p ~/claudecodeui && cd ~/claudecodeui
 curl -O https://raw.githubusercontent.com/cheziyi/claudecodeui-docker/main/compose.yaml
-printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" > .env
+grep -qs '^PUID=' .env || printf 'PUID=%s\nPGID=%s\n' "$(id -u)" "$(id -g)" >> .env
 docker compose up -d
 ```
 
