@@ -24,9 +24,10 @@ PublishPort=3001:3001
 UserNS=keep-id:uid=1000,gid=1000
 User=1000:1000
 
-# Your projects. The directory must exist. :Z relabels it for SELinux
-# (Fedora/RHEL); harmless elsewhere.
-Volume=%h/claudecodeui/workspaces:/workspaces:Z
+# Your projects. The directory must exist. :z relabels it for SELinux
+# (Fedora/RHEL) as shared, so other containers can mount the same folder;
+# harmless elsewhere.
+Volume=%h/claudecodeui/workspaces:/workspaces:z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev
@@ -35,10 +36,12 @@ Environment=TZ=Etc/UTC
 # Optional: commit identity for git inside the container.
 #Environment=GIT_USER_NAME="Your Name"
 #Environment=GIT_USER_EMAIL=you@example.com
-# Optional: skip the interactive login. Keep tokens out of this file: put
-# CLAUDE_CODE_OAUTH_TOKEN=... (from `claude setup-token`) or ANTHROPIC_API_KEY=...
-# in an env file and point to it here.
-#EnvironmentFile=%h/.config/claudecodeui.env
+# Optional: skip the interactive login. A Podman secret keeps the token out of
+# this file and out of `podman inspect`. Store the token from
+# `claude setup-token` (printf, so no trailing newline gets in):
+#   read -rs t && printf %s "$t" | podman secret create claude_oauth - && unset t
+#Secret=claude_oauth,type=env,target=CLAUDE_CODE_OAUTH_TOKEN
+# Or an API key the same way, with target=ANTHROPIC_API_KEY.
 
 # Podman ignores the image's HEALTHCHECK (CI publishes OCI-format images), so
 # declare it here. The script follows SERVER_PORT inside the container.

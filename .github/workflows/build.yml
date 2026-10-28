@@ -8,10 +8,10 @@ on:
   # that release.
   push:
     tags: ["v*"]
-  # Weekly: rebuild the latest release when CloudCLI, Claude Code, fnm or uv
+  # Daily: rebuild the latest release when CloudCLI, Claude Code, fnm or uv
   # has a new version within its ranges, picking up Debian updates along the way.
   schedule:
-    - cron: "17 4 * * 1"
+    - cron: "17 4 * * *"
   # Manual: rebuild a release (default: the latest) from scratch, e.g. to pick
   # up security fixes. Publishes only when run from main.
   workflow_dispatch:
@@ -162,7 +162,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Weekly runs skip when the published build of this release already has
+      # Daily runs skip when the published build of this release already has
       # these CloudCLI, Claude Code, fnm and uv versions, read from its labels.
       - name: Check whether upstream changed
         id: existing

@@ -11,7 +11,7 @@ ghcr.io/cheziyi/claudecodeui:1
 
 Built for `linux/amd64` and `linux/arm64`. Releases are versioned on their own
 (see [Versions and tags](#versions-and-tags)), and the newest release is rebuilt
-weekly when CloudCLI, Claude Code, fnm or uv ships a new version.
+daily when CloudCLI, Claude Code, fnm or uv ships a new version.
 
 ## Quick start
 
@@ -52,7 +52,7 @@ loginctl enable-linger "$USER"   # keep it running after you log out
 
 Projects go in `~/claudecodeui/workspaces`, as with Docker, but Podman keeps its
 volumes apart from Docker's, so it starts with a fresh home volume. To pick up
-new weekly builds, run `podman auto-update`, or have it run daily with
+new builds, run `podman auto-update`, or have it run daily with
 `systemctl --user enable --now podman-auto-update.timer`.
 
 Without systemd, the equivalent one-off command is:
@@ -61,7 +61,7 @@ Without systemd, the equivalent one-off command is:
 mkdir -p ~/claudecodeui/workspaces
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
-  -v ~/claudecodeui/workspaces:/workspaces:Z \
+  -v ~/claudecodeui/workspaces:/workspaces:z \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui:1
 ```
@@ -76,7 +76,8 @@ Then:
    visitor gets to create it, so do this right away.
 2. Sign in to Claude: open the **Shell** tab, run `claude`, and follow the login
    link. Or set `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or
-   `ANTHROPIC_API_KEY` instead (see `compose.yaml`).
+   `ANTHROPIC_API_KEY` instead (see `compose.yaml`, or the Podman unit for
+   keeping it in a Podman secret).
 3. Create a project under `/workspaces`, or clone one there from the shell, then
    start a chat.
 
@@ -195,7 +196,7 @@ environment variables, the user, the tools that come with it.
 - **Minor** (`1.3.0`): new features that work with your existing setup.
 - **Patch** (`1.2.1`): fixes.
 
-The weekly rebuilds update the newest release in place, picking up current
+The daily rebuilds update the newest release in place, picking up current
 Debian packages along the way. They stay within the upstream majors that
 release was published with (see [`upstream.env`](upstream.env)), so a new
 CloudCLI, Claude Code, fnm or uv major arrives only with a release of this
@@ -260,7 +261,7 @@ tag, never `1`, `1.3` or `latest`.
 - **Release tags**: publish that release. `1.2`, `1` and `latest` move only if
   it's the highest release in that line, so a patch to an older line can't take
   them backwards.
-- **Weekly** (Mondays 04:17 UTC): rebuilds the newest release when an upstream
+- **Daily** (04:17 UTC): rebuilds the newest release when an upstream
   version within its ranges changed, and skips otherwise.
 - **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
   latest release, or the version you enter, even if nothing upstream changed,
