@@ -241,9 +241,6 @@ the container with a non-default `PUID`, waits for the healthcheck, and runs
 `node`, `fnm`, `uv`, `claude` and `gh` as `dev`. The multi-arch build then
 reuses those tested amd64 layers.
 
-After the first publish, set the package to public once: *your profile →
-Packages → claudecodeui-docker → Package settings → Change visibility*.
-
 ## License
 
 The files in this repository are MIT licensed. The image also contains
