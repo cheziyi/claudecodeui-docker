@@ -14,7 +14,7 @@ Wants=network-online.target
 After=network-online.target
 
 [Container]
-Image=ghcr.io/cheziyi/claudecodeui-docker:latest
+Image=ghcr.io/cheziyi/claudecodeui-docker:1
 ContainerName=claudecodeui
 PublishPort=3001:3001
 
