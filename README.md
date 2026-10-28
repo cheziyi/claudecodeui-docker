@@ -223,11 +223,14 @@ docker build -t claudecodeui \
 GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
 
 - **Weekly** (Mondays 04:17 UTC): looks up the latest CloudCLI and Claude Code on
-  npm, and skips the build if that pair is already published.
+  npm, and skips the build if that pair is already published. Otherwise it
+  rebuilds without the build cache, which also picks up Debian package updates
+  and the latest fnm and uv.
 - **Manual** (*Actions → Publish image → Run workflow*) on `main`: always rebuilds
   without the build cache, e.g. to pick up security fixes. On other branches it
   only builds.
-- **Push to `main`** that changes the image: rebuilds and publishes.
+- **Push to `main`** that changes the image: rebuilds and publishes, using the
+  build cache.
 - **Pull requests**: build only, no push.
 
 After the first publish, set the package to public once: *your profile →

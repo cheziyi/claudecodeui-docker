@@ -10,10 +10,6 @@ FROM debian:trixie-slim
 # versions users install with fnm. Pinned to the current LTS so a new major
 # (and its native-module ABI) is adopted deliberately.
 ARG NODE_MAJOR=26
-# fnm and uv releases, pinned and checksummed per architecture. To update, bump
-# the version and replace the sha256 of each release asset.
-ARG FNM_VERSION=1.39.0
-ARG UV_VERSION=0.13.6
 ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -58,29 +54,25 @@ RUN set -eux; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
     rm -rf /var/lib/apt/lists/*
 
-# fnm (Node.js versions) and uv (Python versions, packages and tools).
+# fnm (Node.js versions) and uv (Python versions, packages and tools), latest
+# releases. Scheduled and manual CI builds skip the layer cache, so they pick
+# up new ones. uv is checked against the sha256 file it publishes with each
+# release; fnm publishes none.
 RUN set -eux; \
     case "$TARGETARCH" in \
-        amd64) \
-            fnm_asset=fnm-linux.zip; \
-            fnm_sha256=7807664f39d39fc518da1c35ba0181e4b3267603c4b1dedeb4b5fc6ae440a224; \
-            uv_asset=uv-x86_64-unknown-linux-gnu; \
-            uv_sha256=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645 ;; \
-        arm64) \
-            fnm_asset=fnm-arm64.zip; \
-            fnm_sha256=4eaff58b2c5bf30d0934027572dd0b5bbb60d2a1af309230b53662d4b1d45599; \
-            uv_asset=uv-aarch64-unknown-linux-gnu; \
-            uv_sha256=229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d ;; \
+        amd64) fnm_asset=fnm-linux.zip; uv_asset=uv-x86_64-unknown-linux-gnu ;; \
+        arm64) fnm_asset=fnm-arm64.zip; uv_asset=uv-aarch64-unknown-linux-gnu ;; \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/fnm.zip "https://github.com/Schniz/fnm/releases/download/v$FNM_VERSION/$fnm_asset"; \
-    echo "$fnm_sha256  /tmp/fnm.zip" | sha256sum -c -; \
-    unzip -q /tmp/fnm.zip -d /usr/local/bin; \
+    cd /tmp; \
+    curl -fsSL -o fnm.zip "https://github.com/Schniz/fnm/releases/latest/download/$fnm_asset"; \
+    unzip -q fnm.zip -d /usr/local/bin; \
     chmod 0755 /usr/local/bin/fnm; \
-    curl -fsSL -o /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$uv_asset.tar.gz"; \
-    echo "$uv_sha256  /tmp/uv.tar.gz" | sha256sum -c -; \
-    tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \
-    rm /tmp/fnm.zip /tmp/uv.tar.gz; \
+    uv_url="https://github.com/astral-sh/uv/releases/latest/download/$uv_asset.tar.gz"; \
+    curl -fsSL -o "$uv_asset.tar.gz" "$uv_url"; \
+    curl -fsSL "$uv_url.sha256" | sha256sum -c -; \
+    tar -xzf "$uv_asset.tar.gz" --strip-components=1 -C /usr/local/bin "$uv_asset/uv" "$uv_asset/uvx"; \
+    rm fnm.zip "$uv_asset.tar.gz"; \
     fnm --version; \
     uv --version
 

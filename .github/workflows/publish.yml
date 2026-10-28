@@ -2,9 +2,10 @@ name: Publish image
 
 on:
   # Manual runs on main always rebuild from scratch and push, e.g. to pick up
-  # security fixes. On other branches they only build.
+  # security fixes or a new fnm/uv. On other branches they only build.
   workflow_dispatch:
-  # Weekly; skipped when this CloudCLI + Claude Code pair is already published.
+  # Weekly; skipped when this CloudCLI + Claude Code pair is already published,
+  # otherwise rebuilt from scratch like a manual run.
   schedule:
     - cron: "17 4 * * 1"
   push:
@@ -107,10 +108,11 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUSH == 'true' }}
-          # Manual runs skip the layer cache and re-pull the base, so apt
-          # packages and the base image are actually refreshed.
-          no-cache: ${{ github.event_name == 'workflow_dispatch' }}
-          pull: ${{ github.event_name == 'workflow_dispatch' }}
+          # Manual and scheduled runs skip the layer cache and re-pull the base,
+          # so apt packages, the base image and the latest fnm/uv are actually
+          # refreshed. Pushes and PRs keep the cache for fast builds.
+          no-cache: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+          pull: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
