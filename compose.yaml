@@ -21,7 +21,8 @@ services:
       # CLAUDE_CODE_OAUTH_TOKEN: ...
       # ANTHROPIC_API_KEY: ...
     volumes:
-      # Your projects.
+      # Your projects, next to this file (~/claudecodeui/workspaces if you
+      # followed the README).
       - ./workspaces:/workspaces
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
@@ -29,3 +30,6 @@ services:
 
 volumes:
   home:
+    # A fixed name, shared with the `docker run` example and the Podman unit,
+    # so switching between them (or renaming this folder) keeps your data.
+    name: claudecodeui-home

@@ -15,6 +15,7 @@ releases a new version.
 ## Quick start
 
 ```sh
+mkdir -p ~/claudecodeui && cd ~/claudecodeui
 curl -O https://raw.githubusercontent.com/cheziyi/claudecodeui-docker/main/compose.yaml
 docker compose up -d
 ```
@@ -24,10 +25,14 @@ Or without Compose:
 ```sh
 docker run -d --name claudecodeui -p 3001:3001 \
   -e PUID=$(id -u) -e PGID=$(id -g) \
-  -v "$PWD/workspaces:/workspaces" \
+  -v ~/claudecodeui/workspaces:/workspaces \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui-docker:latest
 ```
+
+Either way, projects go in `~/claudecodeui/workspaces` and everything else in
+the `claudecodeui-home` volume, the same as the Podman setup below, so you can
+switch between them without losing anything.
 
 ### Podman
 
