@@ -229,9 +229,9 @@ GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets are needed.
 - **Manual** (*Actions → Publish image → Run workflow*) on `main`: always rebuilds
   without the build cache, e.g. to pick up security fixes. On other branches it
   only builds.
-- **Push to `main`** that changes the image: rebuilds and publishes, using the
-  build cache.
-- **Pull requests**: build only, no push.
+- **Push to `main`** that changes the image: rebuilds without the build cache
+  and publishes.
+- **Pull requests**: build only, using the build cache so checks stay fast.
 
 After the first publish, set the package to public once: *your profile →
 Packages → claudecodeui-docker → Package settings → Change visibility*.

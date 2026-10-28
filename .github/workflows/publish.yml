@@ -8,6 +8,7 @@ on:
   # otherwise rebuilt from scratch like a manual run.
   schedule:
     - cron: "17 4 * * 1"
+  # Changes to the image on main; rebuilt from scratch and published.
   push:
     branches: [main]
     paths:
@@ -108,11 +109,12 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUSH == 'true' }}
-          # Manual and scheduled runs skip the layer cache and re-pull the base,
-          # so apt packages, the base image and the latest fnm/uv are actually
-          # refreshed. Pushes and PRs keep the cache for fast builds.
-          no-cache: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
-          pull: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+          # Every build that publishes skips the layer cache and re-pulls the
+          # base, so a published image always has current apt packages, base
+          # image and fnm/uv. Build-only runs (PRs) use the cache; uncached
+          # runs still write to it, so PR builds start from fresh layers.
+          no-cache: ${{ env.PUSH == 'true' }}
+          pull: ${{ env.PUSH == 'true' }}
           build-args: |
             CLOUDCLI_VERSION=${{ steps.versions.outputs.cloudcli }}
             CLAUDE_CODE_VERSION=${{ steps.versions.outputs.claude }}
