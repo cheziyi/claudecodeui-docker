@@ -184,9 +184,21 @@ stop its own containers (each gets 10 seconds) before it's killed. In
 --privileged --stop-timeout 30 -e DIND=1 -v claudecodeui-docker:/var/lib/docker
 ```
 
-With Podman, the Quadlet unit has the lines to uncomment. The container must
-start as root to run the daemon, so comment out its `User=` line too; the UI
-still runs as `dev`, mapped to your host user.
+With the Quadlet unit, add the `dind.conf` drop-in, which sets all of that:
+
+```sh
+mkdir -p ~/.config/containers/systemd/claudecodeui.container.d
+cp podman/optional/dind.conf ~/.config/containers/systemd/claudecodeui.container.d/
+systemctl --user daemon-reload && systemctl --user restart claudecodeui
+```
+
+It also starts the container as root, which the daemon needs; the UI still
+runs as `dev`, mapped to your host user. To turn it off again, delete the file
+and run the last line.
+
+Drop-ins need Podman 5.0 or newer. On Podman 4, copy the drop-in's settings
+into the `[Container]` section of `claudecodeui.container` instead, replacing
+its `User=` line.
 
 A privileged container can reach the host's devices and kernel settings, so
 it's not a security boundary against an agent that wants out. Under rootless
@@ -228,9 +240,18 @@ The containers it starts are the host's siblings, not children of this one:
 - Published ports open on the host, not in this container, so reach them via
   the host's address rather than `localhost`.
 
-With rootless Podman, mount your Podman socket instead: the Quadlet unit has
-the lines to uncomment. Only containers belonging to your host user are
-reachable that way, not the whole system.
+With rootless Podman, mount your Podman socket instead, with the
+`podman-socket.conf` drop-in:
+
+```sh
+systemctl --user enable --now podman.socket
+mkdir -p ~/.config/containers/systemd/claudecodeui.container.d
+cp podman/optional/podman-socket.conf ~/.config/containers/systemd/claudecodeui.container.d/
+systemctl --user daemon-reload && systemctl --user restart claudecodeui
+```
+
+Only containers belonging to your host user are reachable that way, not the
+whole system. Use one drop-in or the other, not both.
 
 ### GitHub access
 

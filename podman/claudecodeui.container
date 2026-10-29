@@ -26,7 +26,8 @@ User=1000:1000
 # Lets dev use ping. Docker allows every group by default; Podman only root's.
 # Under keep-id the range is checked against host gids, where dev's gid is
 # yours, so it names dev's gid alone.
-Sysctl=net.ipv4.ping_group_range=1000 1000
+# Quoted: Quadlet splits values at spaces.
+Sysctl="net.ipv4.ping_group_range=1000 1000"
 
 # Your projects. The directory must exist. :z relabels it for SELinux
 # (Fedora/RHEL) as shared, so other containers can mount the same folder;
@@ -35,21 +36,9 @@ Volume=%h/claudecodeui/workspaces:/workspaces:z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev
-# Optional: Docker inside this container, isolated from your own containers
-# (see the README's Docker section). Uncomment these four and comment out
-# User= above: the entrypoint starts as root to run dockerd, then runs the UI
-# as dev, still mapped to your host user. StopTimeout gives the inner Docker
-# time to stop its own containers (10s each).
-#PodmanArgs=--privileged
-#Environment=DIND=1
-#Volume=claudecodeui-docker:/var/lib/docker
-#StopTimeout=30
-# Or instead: let the container's docker CLI use your rootless Podman, which
-# gives the agent control of your host user's containers. Enable the socket
-# first with `systemctl --user enable --now podman.socket`. SELinux blocks a
-# container from connecting to it unless labelling is disabled.
-#Volume=%t/podman/podman.sock:/var/run/docker.sock
-#SecurityLabelDisable=true
+# Docker: off by default. To enable it, add a drop-in from optional/ (see the
+# README's Docker section): dind.conf for Docker inside this container, or
+# podman-socket.conf for your own rootless Podman.
 
 Environment=TZ=Etc/UTC
 # Optional: commit identity for git inside the container.
