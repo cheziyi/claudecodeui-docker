@@ -1,3 +1,8 @@
+# Optional: Docker. Off by default (see the README's Docker section). To turn
+# it on, uncomment every line ending in ONE of these markers:
+#   # DinD    Docker inside this container, apart from your own containers
+#   # socket  the host's Docker, which gives the agent root on the host
+
 services:
   claudecodeui:
     image: ghcr.io/cheziyi/claudecodeui:1
@@ -5,6 +10,9 @@ services:
     # build: .
     container_name: claudecodeui
     restart: unless-stopped
+    # Docker's daemon needs it, and time to stop its own containers (10s each).
+    # privileged: true                            # DinD
+    # stop_grace_period: 30s                      # DinD
     ports:
       - "3001:3001"
     environment:
@@ -13,8 +21,7 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: Etc/UTC
-      # Optional: run Docker inside this container (see volumes below).
-      # DIND: 1
+      # DIND: "1"                                 # DinD
       # Optional: commit identity for git inside the container.
       # GIT_USER_NAME: Your Name
       # GIT_USER_EMAIL: you@example.com
@@ -29,20 +36,14 @@ services:
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
       - home:/home/dev
-      # Optional: Docker inside this container (see the README's Docker
-      # section). Also uncomment `privileged`, `stop_grace_period`, `DIND` and
-      # the `docker` volume.
-      # - docker:/var/lib/docker
-      # Or instead: the host's Docker, which gives the agent root on the host.
-      # - /var/run/docker.sock:/var/run/docker.sock
-    # privileged: true
-    # Time for the inner Docker to stop its own containers (10s each).
-    # stop_grace_period: 30s
+      # - docker:/var/lib/docker                  # DinD
+      # - /var/run/docker.sock:/var/run/docker.sock  # socket
 
 volumes:
   home:
     # A fixed name, shared with the `docker run` example, so switching between
     # them (or renaming this folder) keeps your data.
     name: claudecodeui-home
-  # docker:
-  #   name: claudecodeui-docker
+  # The inner Docker's images, containers and build cache.
+  # docker:                                       # DinD
+  #   name: claudecodeui-docker                   # DinD

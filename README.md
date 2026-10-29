@@ -177,8 +177,8 @@ machine: `docker run -v "$PWD:/src"` mounts the project you're in, and a
 published port is on `localhost` here. It needs a privileged container and a
 volume for Docker's data, and a longer stop timeout so the inner Docker can
 stop its own containers (each gets 10 seconds) before it's killed. In
-`compose.yaml`, uncomment `DIND`, `privileged`, `stop_grace_period` and the
-`docker` volume. With `docker run`, add:
+`compose.yaml`, uncomment every line that ends in `# DinD` (there are six),
+then run `docker compose up -d`. With `docker run`, add:
 
 ```sh
 --privileged --stop-timeout 30 -e DIND=1 -v claudecodeui-docker:/var/lib/docker
@@ -213,8 +213,8 @@ your subordinate uids. Run them with `--user "$(id -u):$(id -g)"`, or fix
 ownership afterwards from the container's shell with
 `sudo chown -R dev:dev /workspaces/myapp`.
 
-**The host's Docker.** Mount its socket instead. Uncomment the socket line in
-`compose.yaml`, or add this to `docker run`:
+**The host's Docker.** Mount its socket instead. In `compose.yaml`, uncomment
+the line that ends in `# socket`, or add this to `docker run`:
 
 ```sh
 -v /var/run/docker.sock:/var/run/docker.sock
