@@ -36,9 +36,25 @@ Volume=%h/claudecodeui/workspaces:/workspaces:z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev
-# Docker: off by default. To enable it, add a drop-in from optional/ (see the
-# README's Docker section): dind.conf for Docker inside this container, or
-# podman-socket.conf for your own rootless Podman.
+# Optional: Docker. Off by default; to turn it on, uncomment ONE of the two
+# blocks below (see the README's Docker section).
+#
+# Block 1: Docker inside this container, apart from your own containers.
+# User=0:0 overrides User= above: the entrypoint starts as root to run
+# dockerd, then runs the UI as dev, still mapped to your host user.
+# StopTimeout gives the inner Docker time to stop its containers (10s each).
+#User=0:0
+#PodmanArgs=--privileged
+#Environment=DIND=1
+#Volume=claudecodeui-docker:/var/lib/docker
+#StopTimeout=30
+#
+# Block 2: your own rootless Podman, which gives the agent control of your
+# host user's containers. Also run `systemctl --user enable --now
+# podman.socket` once. SELinux blocks the container from connecting to the
+# socket unless labelling is disabled.
+#Volume=%t/podman/podman.sock:/var/run/docker.sock
+#SecurityLabelDisable=true
 
 Environment=TZ=Etc/UTC
 # Optional: commit identity for git inside the container.
