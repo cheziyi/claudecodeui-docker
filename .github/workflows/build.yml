@@ -222,8 +222,11 @@ jobs:
           UV: ${{ steps.versions.outputs.uv }}
         run: |
           set -euo pipefail
-          # A non-default PUID exercises the entrypoint's user remapping.
-          docker run -d --name smoke -e PUID=1234 -e PGID=1234 claudecodeui:smoke
+          # A non-default PUID exercises the entrypoint's user remapping, and
+          # the runner's Docker socket (its gid has no group in the image) the
+          # socket group setup.
+          docker run -d --name smoke -e PUID=1234 -e PGID=1234 \
+            -v /var/run/docker.sock:/var/run/docker.sock claudecodeui:smoke
           trap 'docker logs smoke; docker rm -f smoke >/dev/null' EXIT
           for _ in $(seq 60); do
             status="$(docker inspect -f '{{.State.Health.Status}}' smoke)"
@@ -246,6 +249,19 @@ jobs:
             [ "$(fnm --version)" = "fnm $FNM" ]
             [[ "$(uv --version)" == "uv $UV "* ]]
             gh --version | head -1
+            docker compose version
+            docker buildx version
+            # dev reaches the mounted socket without sudo.
+            docker info --format "{{.ServerVersion}}"
+            # The debugging tools work as dev, not only as root.
+            ping -c 1 -W 2 127.0.0.1
+            strace -f -o /dev/null true
+            ss -tln | grep -q ":${SERVER_PORT:-3001} "
+            nc -z 127.0.0.1 "${SERVER_PORT:-3001}"
+            lsof -p $$ >/dev/null
+            dig -v
+            pkg-config --version
+            rsync --version | head -1
           '
 
       # Reuses the tested amd64 layers from the builder and adds arm64: from

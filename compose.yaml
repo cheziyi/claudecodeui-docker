@@ -27,6 +27,9 @@ services:
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
       - home:/home/dev
+      # Optional: let the container use the host's Docker. This gives the
+      # agent root on the host; read the README's Docker section first.
+      # - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   home:

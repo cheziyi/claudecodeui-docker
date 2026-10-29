@@ -31,6 +31,12 @@ Volume=%h/claudecodeui/workspaces:/workspaces:z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev
+# Optional: let the container's docker CLI use your rootless Podman, which
+# gives the agent control of your host user's containers. Enable the socket
+# first with `systemctl --user enable --now podman.socket`. SELinux blocks a
+# container from connecting to it unless labelling is disabled.
+#Volume=%t/podman/podman.sock:/var/run/docker.sock
+#SecurityLabelDisable=true
 
 Environment=TZ=Etc/UTC
 # Optional: commit identity for git inside the container.

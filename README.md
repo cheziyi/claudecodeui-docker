@@ -87,12 +87,15 @@ under the gear icon in the sidebar.
 ## What's inside
 
 - CloudCLI UI and Claude Code, at the versions recorded in the image labels
-- Debian 13 (trixie) with `build-essential` and Python 3
+- Debian 13 (trixie) with `build-essential`, `pkg-config` and Python 3
 - [fnm](https://github.com/Schniz/fnm) for Node.js versions and
   [uv](https://docs.astral.sh/uv/) for Python versions, packages and tools.
   Node.js 26 (LTS) is available out of the box.
 - `git`, `git-lfs`, `gh` (GitHub CLI), `openssh-client`
-- `ripgrep`, `fd`, `jq`, `tree`, `htop`, `vim`, `nano`, `curl`, `wget`, `zip`/`unzip`
+- The `docker` CLI with the Compose and Buildx plugins, for the host's Docker
+  if you choose to share it (see [Docker](#docker))
+- `ripgrep`, `fd`, `jq`, `tree`, `htop`, `vim`, `nano`, `curl`, `wget`, `rsync`, `zip`/`unzip`
+- For debugging: `ip`/`ss`, `ping`, `dig`, `nc`, `lsof`, `strace`
 - Passwordless `sudo`, so you (or Claude) can `sudo apt-get install` anything else
 - `tini` as the init process, plus a `/health` healthcheck
 
@@ -140,8 +143,10 @@ Claude Code is told all of this through a system-wide
 and uv without having to work it out. It ships with the image; put your own
 instructions in `~/.claude/CLAUDE.md` or a project's `CLAUDE.md` instead.
 
-Until you set a default, `node` is the image's Node.js 26. The UI server always
-runs on that copy, so switching versions can't break it.
+On first start, the container copies the image's Node.js 26 into the home
+volume as your fnm default, so it stays the default when you install other
+versions. Change it with `fnm default`. The UI server runs on the image's own
+copy, so switching versions can't break it.
 
 Anything installed with `sudo apt-get install` goes into the image's system
 directories and is gone after an update. To keep system packages, build your own
@@ -152,6 +157,38 @@ FROM ghcr.io/cheziyi/claudecodeui:1
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 ```
+
+### Docker
+
+The image has the `docker` CLI but no Docker daemon. To let the container (and
+Claude) build and run containers, mount the host's Docker socket. Uncomment
+the line in `compose.yaml`, or add this to `docker run`:
+
+```sh
+-v /var/run/docker.sock:/var/run/docker.sock
+```
+
+**This gives the agent root on the host.** Anything that can talk to the
+Docker socket can start a privileged container with the host's filesystem
+mounted. Only do it on a machine you'd let the agent administer.
+
+On start, the container adds `dev` to the group that owns the socket, so
+`docker` works without `sudo`. Where that's not enough, e.g. Docker Desktop's
+socket isn't writable by its group, `sudo docker` works.
+
+The containers it starts are the host's siblings, not children of this one:
+
+- Bind-mount paths are resolved on the host, where `/workspaces/myapp` is
+  `~/claudecodeui/workspaces/myapp` (or wherever you mounted it). From inside
+  the container, `docker run -v "$PWD:/src"` mounts the wrong directory, or an
+  empty new one. Use host paths or named volumes. `docker build .` is fine:
+  the CLI uploads the build context.
+- Published ports open on the host, not in this container, so reach them via
+  the host's address rather than `localhost`.
+
+With rootless Podman, mount your Podman socket instead: the Quadlet unit has
+the lines to uncomment. Only containers belonging to your host user are
+reachable that way, not the whole system.
 
 ### GitHub access
 
@@ -227,7 +264,8 @@ passwordless `sudo` inside the container. Treat port 3001 like SSH access:
 - Don't expose it to the internet directly. Use a VPN (e.g. Tailscale), or a
   reverse proxy with TLS and extra authentication.
 - Only mount the directories you want the agent to be able to change.
-- Never mount the Docker socket unless you understand that it gives root on the host.
+- Never mount the Docker socket unless you understand that it gives root on the
+  host (see [Docker](#docker)).
 
 ## Building locally
 
