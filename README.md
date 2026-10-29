@@ -61,6 +61,7 @@ Without systemd, the equivalent one-off command is:
 mkdir -p ~/claudecodeui/workspaces
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
+  --sysctl net.ipv4.ping_group_range="1000 1000" \
   -v ~/claudecodeui/workspaces:/workspaces:z \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui:1
@@ -68,7 +69,8 @@ podman run -d --name claudecodeui -p 3001:3001 \
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
 container's `dev` user, so files in the workspace stay owned by you. There's no
-need for `PUID`/`PGID`.
+need for `PUID`/`PGID`. The `--sysctl` lets `dev` use `ping`, which Podman
+otherwise allows only for root.
 
 Then:
 
@@ -191,6 +193,13 @@ it's not a security boundary against an agent that wants out. Under rootless
 Podman it's still confined to your host user. The daemon's images and build
 cache grow in the `claudecodeui-docker` volume; `docker system prune` from
 inside the container frees them. Its log is in `/var/log/dockerd.log`.
+
+Files that inner containers write to `/workspaces` belong to whichever user
+they run as. Under rootless Podman, only `dev` maps to your host user, so a
+file an inner container writes as root shows up on the host owned by one of
+your subordinate uids. Run them with `--user "$(id -u):$(id -g)"`, or fix
+ownership afterwards from the container's shell with
+`sudo chown -R dev:dev /workspaces/myapp`.
 
 **The host's Docker.** Mount its socket instead. Uncomment the socket line in
 `compose.yaml`, or add this to `docker run`:

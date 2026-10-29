@@ -54,6 +54,11 @@ daemon runs inside this container:
 
 - Paths and ports behave normally: `-v "$PWD:/src"` mounts what you expect,
   and published ports are on `localhost` here.
+- Files an inner container writes to a bind mount belong to the user it runs
+  as. When it writes into the user's projects, run it with
+  `--user "$(id -u):$(id -g)"`, or `sudo chown` the files back to `dev`
+  afterwards; root-owned files there may not be writable by the user on the
+  host.
 - Its containers, images and volumes belong to this container. Still ask
   before removing ones you didn't create; the user may have made them.
 

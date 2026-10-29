@@ -23,6 +23,10 @@ PublishPort=3001:3001
 # not needed here.
 UserNS=keep-id:uid=1000,gid=1000
 User=1000:1000
+# Lets dev use ping. Docker allows every group by default; Podman only root's.
+# Under keep-id the range is checked against host gids, where dev's gid is
+# yours, so it names dev's gid alone.
+Sysctl=net.ipv4.ping_group_range=1000 1000
 
 # Your projects. The directory must exist. :z relabels it for SELinux
 # (Fedora/RHEL) as shared, so other containers can mount the same folder;
