@@ -145,8 +145,9 @@ instructions in `~/.claude/CLAUDE.md` or a project's `CLAUDE.md` instead.
 
 On first start, the container copies the image's Node.js 26 into the home
 volume as your fnm default, so it stays the default when you install other
-versions. While you keep that default, an image update with a newer Node.js
-moves it to a copy of the new one; once you change it with `fnm default` (or
+versions. While you keep that default, an image update with a different
+Node.js moves it to a copy of the new one and deletes the old copy (unless
+another `fnm alias` uses it); once you change it with `fnm default` (or
 remove it with `fnm unalias default`), the container leaves it alone. The UI
 server runs on the image's own copy, so switching versions can't break it.
 

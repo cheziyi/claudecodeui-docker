@@ -81,8 +81,9 @@ fi
 # link: the home volume outlives the image. It leaves out the server's packages
 # but keeps the image's npmrc, so `npm install -g` still goes to ~/.npm-global.
 # A marker records the copy: while the default still points at it, an image
-# with a newer Node.js moves the default to a copy of that one. A default the
-# user changed or removed is left alone. Never blocks the start if it fails.
+# with a different Node.js moves the default to a copy of that one and deletes
+# the old copy, unless another alias uses it. A default the user changed or
+# removed is left alone. Never blocks the start if it fails.
 fnm_dir="$home/.local/share/fnm"
 alias="$fnm_dir/aliases/default"
 marker="$fnm_dir/.cloudcli-default"
@@ -99,7 +100,7 @@ seed_default() {
 }
 if seed_default; then
     if ! as_dev bash -euo pipefail -c '
-        node_dir="$1" dest="$2" alias="$3" marker="$4"
+        node_dir="$1" dest="$2" alias="$3" marker="$4" old="$5"
         if [ ! -d "$dest" ]; then
             tmp="$dest.tmp"
             rm -rf "$tmp"
@@ -108,12 +109,22 @@ if seed_default; then
             cp -a "$node_dir/lib/node_modules/npm" "$tmp/lib/node_modules/"
             # Drop bin links to the excluded packages (claude, cloudcli).
             find "$tmp/bin" -xtype l -delete
+            # Marks a copy made here, unlike a version installed with fnm.
+            touch "$tmp/.cloudcli-copy"
             mv "$tmp" "$dest"
         fi
         mkdir -p "$(dirname "$alias")"
         ln -sfn "$dest" "$alias"
         echo "$dest" > "$marker"
-    ' bash "$node_dir" "$dest" "$alias" "$marker"; then
+        # The copy this replaces, if made here and no other alias points at it.
+        if [ -n "$old" ] && [ "$old" != "$dest" ] && [ -f "$old/.cloudcli-copy" ]; then
+            for a in "$(dirname "$alias")"/*; do
+                [ "$(readlink "$a" || true)" != "$old" ] || exit 0
+            done
+            rm -rf "$old"
+            rmdir "$(dirname "$old")" 2>/dev/null || true
+        fi
+    ' bash "$node_dir" "$dest" "$alias" "$marker" "$seeded"; then
         echo "cloudcli-entrypoint: could not set up Node.js $version as the fnm default" >&2
     fi
 fi
