@@ -31,10 +31,11 @@ if [ "$(id -u)" = "0" ]; then
 
     # A mounted Docker socket (opt-in, see the README): let dev use it by
     # joining the group that owns it, under any name, or a docker-host group
-    # created for that gid. The host's docker group has no fixed gid.
+    # created for that gid. The host's docker group has no fixed gid. Never the
+    # root group (e.g. Docker Desktop's root:root socket): `sudo docker` covers
+    # that without giving every dev process root's group.
     sock=/var/run/docker.sock
-    if [ -S "$sock" ]; then
-        sock_gid="$(stat -c %g "$sock")"
+    if [ -S "$sock" ] && sock_gid="$(stat -c %g "$sock")" && [ "$sock_gid" != 0 ]; then
         sock_group="$(getent group "$sock_gid" | cut -d: -f1 || true)"
         if [ -z "$sock_group" ]; then
             sock_group=docker-host
@@ -44,6 +45,9 @@ if [ "$(id -u)" = "0" ]; then
             else
                 groupadd -g "$sock_gid" "$sock_group"
             fi
+        elif [ "$sock_group" != docker-host ] && getent group docker-host >/dev/null; then
+            # An earlier start's group for a gid the socket no longer has.
+            groupdel docker-host
         fi
         usermod -aG "$sock_group" dev
     fi
@@ -72,21 +76,35 @@ elif ! getent passwd "$(id -u)" >/dev/null; then
     export HOME="$home"
 fi
 
-# A home with no fnm default gets the image's Node.js as its own default, so
-# `node` stays on it after a first `fnm install` (fnm would make that the
-# default). A clean copy without the server's packages and npmrc, not a link:
-# the home volume outlives the image. Never blocks the start if it fails.
+# The image's Node.js becomes the home's fnm default, so `node` stays on it
+# after a first `fnm install` (fnm would make that the default). A copy, not a
+# link: the home volume outlives the image. It leaves out the server's packages
+# but keeps the image's npmrc, so `npm install -g` still goes to ~/.npm-global.
+# A marker records the copy: while the default still points at it, an image
+# with a newer Node.js moves the default to a copy of that one. A default the
+# user changed or removed is left alone. Never blocks the start if it fails.
 fnm_dir="$home/.local/share/fnm"
-if [ ! -L "$fnm_dir/aliases/default" ]; then
-    node_dir="$(readlink -f /opt/node)"
-    version="$(basename "$(dirname "$node_dir")")"
+alias="$fnm_dir/aliases/default"
+marker="$fnm_dir/.cloudcli-default"
+node_dir="$(readlink -f /opt/node)"
+version="$(basename "$(dirname "$node_dir")")"
+dest="$fnm_dir/node-versions/$version/installation"
+seeded="$(cat "$marker" 2>/dev/null || true)"
+seed_default() {
+    if [ -z "$seeded" ]; then
+        [ ! -e "$alias" ] && [ ! -L "$alias" ]
+    else
+        [ "$(readlink "$alias" || true)" = "$seeded" ] && [ "$seeded" != "$dest" ]
+    fi
+}
+if seed_default; then
     if ! as_dev bash -euo pipefail -c '
-        node_dir="$1" dest="$2" alias="$3"
+        node_dir="$1" dest="$2" alias="$3" marker="$4"
         if [ ! -d "$dest" ]; then
             tmp="$dest.tmp"
             rm -rf "$tmp"
             mkdir -p "$tmp/lib/node_modules"
-            tar -C "$node_dir" --exclude=./etc --exclude=./lib/node_modules -cf - . | tar -C "$tmp" -xf -
+            tar -C "$node_dir" --exclude=./lib/node_modules -cf - . | tar -C "$tmp" -xf -
             cp -a "$node_dir/lib/node_modules/npm" "$tmp/lib/node_modules/"
             # Drop bin links to the excluded packages (claude, cloudcli).
             find "$tmp/bin" -xtype l -delete
@@ -94,7 +112,8 @@ if [ ! -L "$fnm_dir/aliases/default" ]; then
         fi
         mkdir -p "$(dirname "$alias")"
         ln -sfn "$dest" "$alias"
-    ' bash "$node_dir" "$fnm_dir/node-versions/$version/installation" "$fnm_dir/aliases/default"; then
+        echo "$dest" > "$marker"
+    ' bash "$node_dir" "$dest" "$alias" "$marker"; then
         echo "cloudcli-entrypoint: could not set up Node.js $version as the fnm default" >&2
     fi
 fi

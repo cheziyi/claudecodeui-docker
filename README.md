@@ -145,8 +145,10 @@ instructions in `~/.claude/CLAUDE.md` or a project's `CLAUDE.md` instead.
 
 On first start, the container copies the image's Node.js 26 into the home
 volume as your fnm default, so it stays the default when you install other
-versions. Change it with `fnm default`. The UI server runs on the image's own
-copy, so switching versions can't break it.
+versions. While you keep that default, an image update with a newer Node.js
+moves it to a copy of the new one; once you change it with `fnm default` (or
+remove it with `fnm unalias default`), the container leaves it alone. The UI
+server runs on the image's own copy, so switching versions can't break it.
 
 Anything installed with `sudo apt-get install` goes into the image's system
 directories and is gone after an update. To keep system packages, build your own
@@ -174,7 +176,9 @@ mounted. Only do it on a machine you'd let the agent administer.
 
 On start, the container adds `dev` to the group that owns the socket, so
 `docker` works without `sudo`. Where that's not enough, e.g. Docker Desktop's
-socket isn't writable by its group, `sudo docker` works.
+socket belongs to `root:root` (never joined) or isn't writable by its group,
+`sudo docker` works. A container started with `--user` can't change groups
+itself; pass the socket's gid with `--group-add "$(stat -c %g /var/run/docker.sock)"`.
 
 The containers it starts are the host's siblings, not children of this one:
 

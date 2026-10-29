@@ -244,6 +244,10 @@ jobs:
             [ "$(stat -c %u /home/dev)" = 1234 ]
             test -r /etc/claude-code/CLAUDE.md
             node --version
+            # The image's Node.js was seeded as the fnm default, with its npmrc.
+            [ -L ~/.local/share/fnm/aliases/default ]
+            [[ "$(command -v node)" == "$HOME/.local/share/fnm/aliases/default/bin/node" ]]
+            [ "$(npm prefix -g)" = /home/dev/.npm-global ]
             [ "$(cloudcli version 2>/dev/null | tail -1)" = "$CLOUDCLI" ]
             [ "$(claude --version)" = "$CLAUDE (Claude Code)" ]
             [ "$(fnm --version)" = "fnm $FNM" ]
