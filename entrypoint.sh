@@ -3,7 +3,8 @@
 #
 # Started as root (the default): remaps the "dev" user to PUID/PGID so files
 # written to bind mounts belong to the host user, fixes ownership of the
-# persisted home, and drops privileges with gosu.
+# persisted home, and drops privileges with gosu. With DIND=1 on a privileged
+# container, also runs a Docker daemon for the command's lifetime.
 # Started as non-root (`--user`): skips all of that and runs the command as-is,
 # with HOME pointed at the persisted home.
 set -euo pipefail
@@ -29,12 +30,61 @@ if [ "$(id -u)" = "0" ]; then
         usermod -o -u "$puid" dev
     fi
 
+    # Docker in Docker (opt-in with DIND=1 on a privileged container, see the
+    # README): run dockerd here, so the agent's containers, images and paths
+    # stay inside this container. Its socket is then handled like a mounted
+    # one below. Never blocks the start: the UI comes up even if dockerd fails.
+    sock=/var/run/docker.sock
+    case "${DIND:-}" in
+    1 | true | yes)
+        if grep -qE ' /(var/)?run/docker\.sock ' /proc/self/mountinfo; then
+            echo "cloudcli-entrypoint: DIND is set but a Docker socket is mounted; using the mounted one" >&2
+        elif ! (( 16#$(awk '/^CapEff:/ { print $2 }' /proc/self/status) >> 21 & 1 )); then
+            # No CAP_SYS_ADMIN: not privileged, so dockerd can't mount or
+            # manage cgroups.
+            echo "cloudcli-entrypoint: DIND needs a privileged container (--privileged); not starting dockerd" >&2
+        else
+            if ! grep -q ' /var/lib/docker ' /proc/self/mountinfo; then
+                echo "cloudcli-entrypoint: /var/lib/docker is not a volume; images won't survive an update and storage may be slow" >&2
+            fi
+            # cgroup v2 nesting, as in Docker's own dind script: move every
+            # process out of the root cgroup so dockerd can delegate controllers
+            # to the containers it starts.
+            if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+                mkdir -p /sys/fs/cgroup/init
+                xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || true
+                sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+                    > /sys/fs/cgroup/cgroup.subtree_control || true
+            fi
+            mount --make-rshared / || true
+            # A restarted container keeps the last run's runtime state, whose
+            # pid files can name unrelated processes now. The daemon's data is
+            # in /var/lib/docker.
+            rm -rf "$sock" /var/run/docker.pid /var/run/docker /var/run/containerd
+            dockerd --group docker > /var/log/dockerd.log 2>&1 &
+            dockerd_pid=$!
+            # A stop before the command starts still stops dockerd (below).
+            trap 'stopping=1' TERM INT
+            # Even if dockerd is slow to create its socket for the check below.
+            usermod -aG docker dev
+            for _ in $(seq 60); do
+                docker info >/dev/null 2>&1 && break
+                kill -0 "$dockerd_pid" 2>/dev/null || break
+                sleep 0.5
+            done
+            if ! docker info >/dev/null 2>&1; then
+                echo "cloudcli-entrypoint: dockerd did not start; see /var/log/dockerd.log:" >&2
+                tail -n 20 /var/log/dockerd.log >&2 || true
+            fi
+        fi
+        ;;
+    esac
+
     # A mounted Docker socket (opt-in, see the README): let dev use it by
     # joining the group that owns it, under any name, or a docker-host group
     # created for that gid. The host's docker group has no fixed gid. Never the
     # root group (e.g. Docker Desktop's root:root socket): `sudo docker` covers
     # that without giving every dev process root's group.
-    sock=/var/run/docker.sock
     if [ -S "$sock" ] && sock_gid="$(stat -c %g "$sock")" && [ "$sock_gid" != 0 ]; then
         sock_group="$(getent group "$sock_gid" | cut -d: -f1 || true)"
         if [ -z "$sock_group" ]; then
@@ -70,10 +120,13 @@ if [ "$(id -u)" = "0" ]; then
     if [ "$(stat -c %u /workspaces)" = "0" ] || [ -z "$(ls -A /workspaces)" ]; then
         chown "$puid:$pgid" /workspaces
     fi
-elif ! getent passwd "$(id -u)" >/dev/null; then
+else
+    case "${DIND:-}" in
+    1 | true | yes) echo "cloudcli-entrypoint: DIND needs the container to start as root (no --user); not starting dockerd" >&2 ;;
+    esac
     # A --user uid with no passwd entry gets HOME=/ from Docker; keep git,
     # Claude and the UI's state in the persisted home instead.
-    export HOME="$home"
+    getent passwd "$(id -u)" >/dev/null || export HOME="$home"
 fi
 
 # The image's Node.js becomes the home's fnm default, so `node` stays on it
@@ -143,6 +196,27 @@ if ! as_dev git config --global --get-all credential.https://github.com.helper >
     as_dev gh auth setup-git >/dev/null 2>&1 || true
 fi
 
+if [ -n "${dockerd_pid:-}" ]; then
+    # Stay up to stop dockerd after the command: tini only signals its direct
+    # child, and a dockerd killed at the stop timeout leaves its containers
+    # uncleanly stopped.
+    status=0
+    if [ -z "${stopping:-}" ]; then
+        gosu dev "$@" &
+        cmd_pid=$!
+        trap 'kill -TERM "$cmd_pid" 2>/dev/null || true' TERM INT
+        # A stop that arrived while the command was starting.
+        [ -z "${stopping:-}" ] || kill -TERM "$cmd_pid" 2>/dev/null || true
+        # wait returns early when the trap runs; wait again until it has exited.
+        while :; do
+            wait "$cmd_pid" && status=0 || status=$?
+            kill -0 "$cmd_pid" 2>/dev/null || break
+        done
+    fi
+    kill -TERM "$dockerd_pid" 2>/dev/null || true
+    wait "$dockerd_pid" || true
+    exit "$status"
+fi
 if [ "$(id -u)" = "0" ]; then
     exec gosu dev "$@"
 fi

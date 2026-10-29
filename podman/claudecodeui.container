@@ -31,7 +31,16 @@ Volume=%h/claudecodeui/workspaces:/workspaces:z
 # Claude Code login, settings and sessions, the UI's accounts database,
 # git/gh/ssh config and shell history. Survives image updates.
 Volume=claudecodeui-home.volume:/home/dev
-# Optional: let the container's docker CLI use your rootless Podman, which
+# Optional: Docker inside this container, isolated from your own containers
+# (see the README's Docker section). Uncomment these four and comment out
+# User= above: the entrypoint starts as root to run dockerd, then runs the UI
+# as dev, still mapped to your host user. StopTimeout gives the inner Docker
+# time to stop its own containers (10s each).
+#PodmanArgs=--privileged
+#Environment=DIND=1
+#Volume=claudecodeui-docker:/var/lib/docker
+#StopTimeout=30
+# Or instead: let the container's docker CLI use your rootless Podman, which
 # gives the agent control of your host user's containers. Enable the socket
 # first with `systemctl --user enable --now podman.socket`. SELinux blocks a
 # container from connecting to it unless labelling is disabled.

@@ -13,6 +13,8 @@ services:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: Etc/UTC
+      # Optional: run Docker inside this container (see volumes below).
+      # DIND: 1
       # Optional: commit identity for git inside the container.
       # GIT_USER_NAME: Your Name
       # GIT_USER_EMAIL: you@example.com
@@ -27,12 +29,20 @@ services:
       # Claude Code login, settings and sessions, the UI's accounts database,
       # git/gh/ssh config and shell history. Survives image updates.
       - home:/home/dev
-      # Optional: let the container use the host's Docker. This gives the
-      # agent root on the host; read the README's Docker section first.
+      # Optional: Docker inside this container (see the README's Docker
+      # section). Also uncomment `privileged`, `stop_grace_period`, `DIND` and
+      # the `docker` volume.
+      # - docker:/var/lib/docker
+      # Or instead: the host's Docker, which gives the agent root on the host.
       # - /var/run/docker.sock:/var/run/docker.sock
+    # privileged: true
+    # Time for the inner Docker to stop its own containers (10s each).
+    # stop_grace_period: 30s
 
 volumes:
   home:
     # A fixed name, shared with the `docker run` example, so switching between
     # them (or renaming this folder) keeps your data.
     name: claudecodeui-home
+  # docker:
+  #   name: claudecodeui-docker
