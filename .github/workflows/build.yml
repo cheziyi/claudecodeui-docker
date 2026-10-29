@@ -239,6 +239,7 @@ jobs:
             set -ex
             [ "$(id -u):$(id -g)" = 1234:1234 ]
             [ "$(stat -c %u /home/dev)" = 1234 ]
+            test -r /etc/claude-code/CLAUDE.md
             node --version
             [ "$(cloudcli version 2>/dev/null | tail -1)" = "$CLOUDCLI" ]
             [ "$(claude --version)" = "$CLAUDE (Claude Code)" ]
