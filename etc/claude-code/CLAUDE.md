@@ -41,4 +41,20 @@ fnm, uv, `uv tool`, or `npm install -g` persists. Packages installed with
 `sudo apt-get install` are lost on the next image update; that's fine for
 something temporary, but tell the user when they'll need it permanently.
 
-Other tools available: `git`, `gh`, `rg`, `fd`, `jq`, `build-essential`.
+Other tools available: `git`, `gh`, `rg`, `fd`, `jq`, `rsync`, `build-essential`,
+`pkg-config`, and for debugging `ip`/`ss`, `ping`, `dig`, `nc`, `lsof`, `strace`.
+
+## Docker
+
+The `docker` CLI (with `compose` and `buildx`) is installed, but there's no
+daemon in this container. It works only if the user mounted the host's Docker
+or Podman socket; if `docker info` fails, say so rather than trying to install
+or start a daemon. When it works, containers you start run on the host:
+
+- Bind-mount paths are host paths. `/workspaces` is a different directory on
+  the host, so `-v "$PWD:/src"` won't mount what you expect. Prefer named
+  volumes, `docker cp`, or a build context (which the CLI uploads, so
+  `docker build .` is fine).
+- Published ports are on the host, not on `localhost` here.
+- You're acting on the user's host: don't stop, remove or prune containers,
+  images or volumes you didn't create without asking.

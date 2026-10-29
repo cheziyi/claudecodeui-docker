@@ -14,20 +14,30 @@ ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Developer tooling plus the GitHub CLI from its official apt repository.
-# python3 and build-essential are also what node-gyp needs for native modules.
+# Developer tooling plus the GitHub CLI and the Docker CLI from their official
+# apt repositories. python3 and build-essential are also what node-gyp needs
+# for native modules. Only Docker's client: it talks to a host daemon whose
+# socket the user chooses to mount (see the README).
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
     install -d -m 0755 /etc/apt/keyrings; \
+    arch="$(dpkg --print-architecture)"; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc; \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg /etc/apt/keyrings/docker.asc; \
+    echo "deb [arch=$arch signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list; \
+    echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
+        bind9-dnsutils \
         build-essential \
+        docker-buildx-plugin \
+        docker-ce-cli \
+        docker-compose-plugin \
         fd-find \
         file \
         gh \
@@ -35,13 +45,20 @@ RUN set -eux; \
         git-lfs \
         gosu \
         htop \
+        iproute2 \
+        iputils-ping \
         jq \
         less \
+        lsof \
         nano \
+        netcat-openbsd \
         openssh-client \
+        pkg-config \
         procps \
         python3 \
         ripgrep \
+        rsync \
+        strace \
         sudo \
         tini \
         tree \
