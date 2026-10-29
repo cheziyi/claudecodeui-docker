@@ -14,10 +14,11 @@ ARG TARGETARCH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Developer tooling plus the GitHub CLI and the Docker CLI from their official
-# apt repositories. python3 and build-essential are also what node-gyp needs
-# for native modules. Only Docker's client: it talks to a host daemon whose
-# socket the user chooses to mount (see the README).
+# Developer tooling plus the GitHub CLI and Docker from their official apt
+# repositories. python3 and build-essential are also what node-gyp needs for
+# native modules. Docker's daemon only runs when the user opts in with DIND=1
+# on a privileged container; otherwise the CLI talks to a host socket the user
+# chooses to mount, or to nothing (see the README).
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
@@ -35,7 +36,9 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         bind9-dnsutils \
         build-essential \
+        containerd.io \
         docker-buildx-plugin \
+        docker-ce \
         docker-ce-cli \
         docker-compose-plugin \
         fd-find \
@@ -46,6 +49,7 @@ RUN set -eux; \
         gosu \
         htop \
         iproute2 \
+        iptables \
         iputils-ping \
         jq \
         less \

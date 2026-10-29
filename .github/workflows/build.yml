@@ -266,7 +266,56 @@ jobs:
             dig -v
             pkg-config --version
             rsync --version | head -1
+            # Without DIND, no daemon runs here.
+            ! pgrep -x dockerd
           '
+
+      - name: Smoke test Docker in Docker
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke-dind --privileged --stop-timeout 30 -e DIND=1 \
+            -v smoke-dind:/var/lib/docker claudecodeui:smoke
+          trap 'docker logs smoke-dind; docker rm -f smoke-dind >/dev/null; docker volume rm smoke-dind >/dev/null' EXIT
+          for _ in $(seq 60); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' smoke-dind)"
+            [ "$status" = starting ] || break
+            [ "$(docker inspect -f '{{.State.Running}}' smoke-dind)" = true ] || { status=exited; break; }
+            sleep 2
+          done
+          echo "health: $status"
+          [ "$status" = healthy ]
+          docker exec -u dev smoke-dind bash -lc '
+            set -ex
+            # The daemon is this container, reachable by dev without sudo.
+            [ "$(docker info --format "{{.Name}}")" = "$(hostname)" ]
+            # Bind mounts and ports resolve here, not on the runner.
+            mkdir -p /workspaces/smoke && cd /workspaces/smoke
+            echo bind-ok > f.txt
+            [ "$(docker run --rm -v "$PWD:/w" alpine:3.22 cat /w/f.txt)" = bind-ok ]
+            printf "FROM alpine:3.22\nCMD [\"echo\", \"build-ok\"]\n" > Dockerfile
+            docker build -q -t smoke-build .
+            [ "$(docker run --rm smoke-build)" = build-ok ]
+            docker run -d --name web -p 8080:80 -v "$PWD:/usr/share/nginx/html:ro" nginx:alpine
+            for _ in $(seq 20); do curl -fsS http://127.0.0.1:8080/f.txt && break; sleep 0.5; done
+            [ "$(curl -fsS http://127.0.0.1:8080/f.txt)" = bind-ok ]
+            docker compose version
+            # Ignores SIGTERM, so the inner Docker waits out its 10s for it.
+            docker run -d --name keeper --restart unless-stopped alpine:3.22 sleep 1d
+          '
+          # dockerd shuts down cleanly within the stop timeout, not killed.
+          docker stop smoke-dind
+          [ "$(docker inspect -f '{{.State.ExitCode}}' smoke-dind)" = 0 ]
+          log="$(docker cp smoke-dind:/var/log/dockerd.log - | tar -xO)"
+          grep -q "Daemon shutdown complete" <<<"$log" || { tail -20 <<<"$log"; exit 1; }
+          # A restart starts dockerd again despite the last run's runtime
+          # state, and brings back containers with a restart policy.
+          docker start smoke-dind
+          for _ in $(seq 30); do
+            docker exec -u dev smoke-dind docker ps --format '{{.Names}}' 2>/dev/null | grep -qx keeper && break
+            sleep 2
+          done
+          docker exec -u dev smoke-dind docker ps --format '{{.Names}}' | grep -qx keeper
 
       # Reuses the tested amd64 layers from the builder and adds arm64: from
       # the GitHub cache on PRs, from scratch when publishing.

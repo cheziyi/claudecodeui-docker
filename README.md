@@ -61,6 +61,7 @@ Without systemd, the equivalent one-off command is:
 mkdir -p ~/claudecodeui/workspaces
 podman run -d --name claudecodeui -p 3001:3001 \
   --userns keep-id:uid=1000,gid=1000 --user 1000:1000 \
+  --sysctl net.ipv4.ping_group_range="1000 1000" \
   -v ~/claudecodeui/workspaces:/workspaces:z \
   -v claudecodeui-home:/home/dev \
   ghcr.io/cheziyi/claudecodeui:1
@@ -68,7 +69,8 @@ podman run -d --name claudecodeui -p 3001:3001 \
 
 Under rootless Podman, `--userns keep-id` maps your host user to the
 container's `dev` user, so files in the workspace stay owned by you. There's no
-need for `PUID`/`PGID`.
+need for `PUID`/`PGID`. The `--sysctl` lets `dev` use `ping`, which Podman
+otherwise allows only for root.
 
 Then:
 
@@ -92,8 +94,8 @@ under the gear icon in the sidebar.
   [uv](https://docs.astral.sh/uv/) for Python versions, packages and tools.
   Node.js 26 (LTS) is available out of the box.
 - `git`, `git-lfs`, `gh` (GitHub CLI), `openssh-client`
-- The `docker` CLI with the Compose and Buildx plugins, for the host's Docker
-  if you choose to share it (see [Docker](#docker))
+- Docker with the Compose and Buildx plugins: a daemon inside the container,
+  or the host's Docker, if you enable either (see [Docker](#docker))
 - `ripgrep`, `fd`, `jq`, `tree`, `htop`, `vim`, `nano`, `curl`, `wget`, `rsync`, `zip`/`unzip`
 - For debugging: `ip`/`ss`, `ping`, `dig`, `nc`, `lsof`, `strace`
 - Passwordless `sudo`, so you (or Claude) can `sudo apt-get install` anything else
@@ -110,6 +112,7 @@ under the gear icon in the sidebar.
 | `SERVER_PORT` | `3001` | Port the UI listens on inside the container. |
 | `WORKSPACES_ROOT` | `/workspaces` | The UI only opens projects under this path. |
 | `TZ` | `Etc/UTC` | Container time zone. |
+| `DIND` | – | `1` runs a Docker daemon inside the container. Needs `--privileged`; see [Docker](#docker). |
 
 The CloudCLI server's other settings (for example `API_KEY` and `JWT_SECRET`)
 can be passed as environment variables too. See the
@@ -121,6 +124,7 @@ can be passed as environment variables too. See the
 |---|---|
 | `/workspaces` | Your projects. Bind-mount a host directory here. |
 | `/home/dev` | Claude Code login, settings, MCP servers and session history (`~/.claude`, `~/.claude.json`), the UI's account database (`~/.cloudcli`), git/gh/ssh config, and the languages and tools you install (below). Keep it on a named volume so it survives image updates. |
+| `/var/lib/docker` | Only with `DIND=1`: the inner Docker's images, containers and volumes. Keep it on a named volume. |
 
 ### Node.js and Python versions
 
@@ -163,9 +167,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends postgresql-clie
 
 ### Docker
 
-The image has the `docker` CLI but no Docker daemon. To let the container (and
-Claude) build and run containers, mount the host's Docker socket. Uncomment
-the line in `compose.yaml`, or add this to `docker run`:
+Docker is installed but off by default. To let the container (and Claude)
+build and run containers, pick one of two ways.
+
+**Docker inside the container (recommended).** The container runs its own
+Docker daemon. The agent's containers, images and build cache stay inside it,
+apart from your own, and paths and ports work as they would on a normal
+machine: `docker run -v "$PWD:/src"` mounts the project you're in, and a
+published port is on `localhost` here. It needs a privileged container and a
+volume for Docker's data, and a longer stop timeout so the inner Docker can
+stop its own containers (each gets 10 seconds) before it's killed. In
+`compose.yaml`, uncomment every line that ends in `# DinD` (there are six),
+then run `docker compose up -d`. With `docker run`, add:
+
+```sh
+--privileged --stop-timeout 30 -e DIND=1 -v claudecodeui-docker:/var/lib/docker
+```
+
+With Podman, edit `~/.config/containers/systemd/claudecodeui.container` and
+uncomment *Block 1* in its Docker section, so the lines read:
+
+```ini
+User=0:0
+PodmanArgs=--privileged
+Environment=DIND=1
+Volume=claudecodeui-docker:/var/lib/docker
+StopTimeout=30
+```
+
+Then apply it with `systemctl --user daemon-reload` and
+`systemctl --user restart claudecodeui`. `User=0:0` replaces the `User=` line
+further up, because the daemon needs a root start; the UI still runs as
+`dev`, mapped to your host user.
+
+A privileged container can reach the host's devices and kernel settings, so
+it's not a security boundary against an agent that wants out. Under rootless
+Podman it's still confined to your host user. The daemon's images and build
+cache grow in the `claudecodeui-docker` volume; `docker system prune` from
+inside the container frees them. Its log is in `/var/log/dockerd.log`.
+
+Files that inner containers write to `/workspaces` belong to whichever user
+they run as. Under rootless Podman, only `dev` maps to your host user, so a
+file an inner container writes as root shows up on the host owned by one of
+your subordinate uids. Run them with `--user "$(id -u):$(id -g)"`, or fix
+ownership afterwards from the container's shell with
+`sudo chown -R dev:dev /workspaces/myapp`.
+
+**The host's Docker.** Mount its socket instead. In `compose.yaml`, uncomment
+the line that ends in `# socket`, or add this to `docker run`:
 
 ```sh
 -v /var/run/docker.sock:/var/run/docker.sock
@@ -191,9 +240,19 @@ The containers it starts are the host's siblings, not children of this one:
 - Published ports open on the host, not in this container, so reach them via
   the host's address rather than `localhost`.
 
-With rootless Podman, mount your Podman socket instead: the Quadlet unit has
-the lines to uncomment. Only containers belonging to your host user are
-reachable that way, not the whole system.
+With rootless Podman, mount your Podman socket instead. Run
+`systemctl --user enable --now podman.socket` once, then uncomment *Block 2*
+in the Docker section of `~/.config/containers/systemd/claudecodeui.container`,
+so the lines read:
+
+```ini
+Volume=%t/podman/podman.sock:/var/run/docker.sock
+SecurityLabelDisable=true
+```
+
+Then run `systemctl --user daemon-reload` and
+`systemctl --user restart claudecodeui`. Only containers belonging to your
+host user are reachable that way, not the whole system.
 
 ### GitHub access
 

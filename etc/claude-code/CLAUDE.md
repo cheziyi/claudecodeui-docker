@@ -46,10 +46,24 @@ Other tools available: `git`, `gh`, `rg`, `fd`, `jq`, `rsync`, `build-essential`
 
 ## Docker
 
-The `docker` CLI (with `compose` and `buildx`) is installed, but there's no
-daemon in this container. It works only if the user mounted the host's Docker
-or Podman socket; if `docker info` fails, say so rather than trying to install
-or start a daemon. When it works, containers you start run on the host:
+The `docker` CLI (with `compose` and `buildx`) is installed. It works only if
+the user enabled Docker; if `docker info` fails, say so rather than trying to
+install or start a daemon. There are two setups. If
+`docker info --format '{{.Name}}'` prints this container's `hostname`, the
+daemon runs inside this container:
+
+- Paths and ports behave normally: `-v "$PWD:/src"` mounts what you expect,
+  and published ports are on `localhost` here.
+- Files an inner container writes to a bind mount belong to the user it runs
+  as. When it writes into the user's projects, run it with
+  `--user "$(id -u):$(id -g)"`, or `sudo chown` the files back to `dev`
+  afterwards; root-owned files there may not be writable by the user on the
+  host.
+- Its containers, images and volumes belong to this container. Still ask
+  before removing ones you didn't create; the user may have made them.
+
+Otherwise it's the host's Docker or Podman, and containers you start run on
+the host:
 
 - Bind-mount paths are host paths. `/workspaces` is a different directory on
   the host, so `-v "$PWD:/src"` won't mount what you expect. Prefer named
