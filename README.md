@@ -355,8 +355,8 @@ git tag v1.2.0 && git push origin v1.2.0
 ```
 
 `.github/workflows/build.yml` (*Build image*) then builds, smoke-tests and
-publishes it to GHCR using the repository's built-in `GITHUB_TOKEN`. No secrets
-are needed. Tags like `v1.3.0-rc.1` publish as a pre-release: only their exact
+publishes it to GHCR using the repository's built-in `GITHUB_TOKEN`. A tag whose
+version is already published is skipped, not rebuilt. Tags like `v1.3.0-rc.1` publish as a pre-release: only their exact
 tag, never `1`, `1.3` or `latest`.
 
 - **Pull requests**: every PR builds both architectures and smoke-tests the
@@ -379,14 +379,15 @@ the one that passed.
 
 ### Automatic patch releases
 
-The tags and GitHub releases need nothing extra. To also commit each release to
-[`versions.env`](versions.env) on `main`, which keeps the commit history current
-and stops GitHub disabling the daily job after 60 days without activity, the
-job needs a GitHub App that can bypass the `main` ruleset:
+Automatic patches need a GitHub App. `GITHUB_TOKEN` can't tag a commit whose
+workflow files differ from `main`'s, which is common for patches, and it can't
+commit each release to [`versions.env`](versions.env) on `main`. Those commits
+keep the history current and stop GitHub disabling the daily job after 60 days
+without activity.
 
 1. [Create a GitHub App](https://github.com/settings/apps/new) with
-   **Contents: Read and write** permission and webhooks off, and install it on
-   this repository only.
+   **Contents** and **Workflows: Read and write** permissions and webhooks off,
+   and install it on this repository only.
 2. Add the App to the bypass list of the `protect-main` ruleset.
 3. In the repository's Actions settings, add the App's client ID as the variable
    `RELEASE_APP_CLIENT_ID`, and a generated private key as the secret
