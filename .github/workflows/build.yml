@@ -172,13 +172,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Before anything is published, so a misconfigured App fails the run early.
+      # GITHUB_TOKEN can't tag a commit whose workflow files differ from main's,
+      # which patches often do, or commit to main past its ruleset. See
+      # "Automatic patch releases" in the README.
+      - name: Get the release app's token
+        id: app
+        if: env.PUSH == 'true' && vars.RELEASE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       # Compares the release being patched with the resolved versions, read from
       # its labels. Daily runs skip when they match; the changes go in the notes.
+      # Tag pushes skip when that version is already published, as published
+      # versions never change: a patch's own tag lands here.
       - name: Check whether upstream changed
         id: existing
-        if: env.PUSH == 'true' && github.event_name != 'push'
+        if: env.PUSH == 'true'
         env:
-          REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.base }}
+          REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.base || steps.release.outputs.version }}
           CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
           CLAUDE: ${{ steps.versions.outputs.claude }}
           FNM: ${{ steps.versions.outputs.fnm }}
@@ -186,7 +202,12 @@ jobs:
         run: |
           set -euo pipefail
           if ! config="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null)"; then
-            echo "$REF isn't published; building a new patch." >> "$GITHUB_STEP_SUMMARY"
+            echo "$REF isn't published; building it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # A multi-platform image gives one config per platform; their labels match.
@@ -400,12 +421,13 @@ jobs:
           echo "Moved ${tags[*]} to $VERSION" >> "$GITHUB_STEP_SUMMARY"
 
       # Last, so a run that fails earlier leaves no tag and the next one retries
-      # the same version. Tags from GITHUB_TOKEN don't start another run. The tag
-      # is on the patched release's commit: only the upstream versions differ.
+      # the same version. The tag is on the patched release's commit: only the
+      # upstream versions differ. An App's tag starts another run, which skips
+      # because this version's image exists.
       - name: Create the GitHub release
         if: env.PUSH == 'true' && github.event_name != 'push' && steps.existing.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
           VERSION: ${{ steps.release.outputs.version }}
           REVISION: ${{ steps.release.outputs.revision }}
           CHANGES: ${{ steps.existing.outputs.changes }}
@@ -419,20 +441,9 @@ jobs:
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$REVISION" \
             --title "v$VERSION" --notes "$notes" --latest="$latest"
 
-      # Optional: needs a GitHub App that the main ruleset lets bypass its rules,
-      # as GITHUB_TOKEN can't. See "Automatic patch releases" in the README.
-      - name: Get a token for main
-        id: app
-        if: env.PUSH == 'true' && vars.RELEASE_APP_CLIENT_ID != ''
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
-
       # Runs on skipped days too, so a failed update is retried by the next run.
       - name: Record the release on main
-        if: env.PUSH == 'true'
+        if: env.PUSH == 'true' && !(github.event_name == 'push' && steps.existing.outputs.skip == 'true')
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           VERSION: ${{ steps.existing.outputs.skip == 'true' && steps.release.outputs.base || steps.release.outputs.version }}
