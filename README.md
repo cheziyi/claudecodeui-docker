@@ -10,8 +10,8 @@ ghcr.io/cheziyi/claudecodeui:1
 ```
 
 Built for `linux/amd64` and `linux/arm64`. Releases are versioned on their own
-(see [Versions and tags](#versions-and-tags)), and the newest release is rebuilt
-daily when CloudCLI, Claude Code, fnm or uv ships a new version.
+(see [Versions and tags](#versions-and-tags)), and a new patch release is
+published automatically when CloudCLI, Claude Code, fnm or uv ships a new version.
 
 ## Quick start
 
@@ -295,26 +295,28 @@ environment variables, the user, the tools that come with it.
 - **Major** (`2.0.0`): a breaking change for existing setups, e.g. a renamed
   path or volume, or a removed variable. Check the release notes before moving.
 - **Minor** (`1.3.0`): new features that work with your existing setup.
-- **Patch** (`1.2.1`): fixes.
+- **Patch** (`1.2.1`): fixes and upstream updates.
 
-The daily rebuilds update the newest release in place, picking up current
-Debian packages along the way. They stay within the upstream majors that
-release was published with (see [`upstream.env`](upstream.env)), so a new
-CloudCLI, Claude Code, fnm or uv major arrives only with a release of this
-image, and as a new major here if it breaks existing setups.
+When a new upstream version is out, a daily job publishes the next patch
+release, with current Debian packages and release notes listing what changed.
+Patches stay within the upstream majors their release line was published with
+(see [`upstream.env`](upstream.env)), so a new CloudCLI, Claude Code, fnm or uv
+major arrives only with a manual release of this image, and as a new major here
+if it breaks existing setups.
 
-Only the newest release is rebuilt. Once `2.0.0` is out, `1` stops getting
-updates; move to `2` after reading its release notes.
+Only the newest release line gets these patches. Once `2.0.0` is out, `1` stops
+getting updates; move to `2` after reading its release notes.
 
 | Tag | Follows |
 |---|---|
 | `1` | the newest `1.x` release. Use this to auto-update without breaking changes. |
 | `1.2` | the newest `1.2.x` release |
-| `1.2.0` | exactly that release |
+| `1.2.0` | exactly that release. Use this to pin a build or roll back. |
 | `latest` | the newest release, including the next major |
 
-To freeze an exact build, pin its digest (`…:1@sha256:…`). To see which
-CloudCLI, Claude Code, fnm and uv a build contains:
+Exact versions published before automatic patch releases were rebuilt in place,
+and don't change any more. To see which CloudCLI, Claude Code, fnm and uv a build
+contains:
 
 ```sh
 docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui:1
@@ -363,15 +365,32 @@ tag, never `1`, `1.3` or `latest`.
 - **Release tags**: publish that release. `1.2`, `1` and `latest` move only if
   it's the highest release in that line, so a patch to an older line can't take
   them backwards.
-- **Daily** (04:17 UTC): rebuilds the newest release when an upstream
-  version within its ranges changed, and skips otherwise.
-- **Manual** (*Actions → Build image → Run workflow*, from `main`): rebuilds the
-  latest release, or the version you enter, even if nothing upstream changed,
-  e.g. to pick up security fixes.
+- **Daily** (04:17 UTC): publishes a patch of the newest release when an
+  upstream version within its ranges changed, and skips otherwise.
+- **Manual** (*Actions → Build image → Run workflow*, from `main`): publishes a
+  patch of the latest release, or of the line you enter, even if nothing
+  upstream changed, e.g. to pick up security fixes.
 
-Pushes to `main` don't publish: changes reach users with the next release.
-Every run smoke-tests the amd64 build before the multi-arch build reuses its
-layers, so the published image is the one that passed.
+Pushes to `main` don't publish: changes reach users with the next release you
+tag. Automatic patches are tagged on the commit of the release they patch, so
+they never include unreleased work from `main`. Every run smoke-tests the amd64
+build before the multi-arch build reuses its layers, so the published image is
+the one that passed.
+
+### Automatic patch releases
+
+The tags and GitHub releases need nothing extra. To also commit each release to
+[`versions.env`](versions.env) on `main`, which keeps the commit history current
+and stops GitHub disabling the daily job after 60 days without activity, the
+job needs a GitHub App that can bypass the `main` ruleset:
+
+1. [Create a GitHub App](https://github.com/settings/apps/new) with
+   **Contents: Read and write** permission and webhooks off, and install it on
+   this repository only.
+2. Add the App to the bypass list of the `protect-main` ruleset.
+3. In the repository's Actions settings, add the App's client ID as the variable
+   `RELEASE_APP_CLIENT_ID`, and a generated private key as the secret
+   `RELEASE_APP_PRIVATE_KEY`.
 
 ### Upstream majors
 
