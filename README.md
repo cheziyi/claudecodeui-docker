@@ -393,10 +393,12 @@ PR goes out with the next daily run, or straight away with a manual one:
 gh workflow run build.yml --ref main
 ```
 
-If a release's build fails, it has no image, and the next daily run starts its
-build again instead of releasing past it. A manual run does the same and stops;
-run it again once the image is out. To retry by hand, run *Build image* from the
-release's tag.
+If a release's build fails, it has no image. The next daily run starts its build
+again, and releases past it only when an upstream version changed or a merged PR
+asks for a bump, so one broken build can't hold up every later release. A manual
+run always releases past it. To retry by hand, run *Build image* from the
+release's tag. A run that committed `versions.env` but failed before tagging is
+finished by the next run, which tags that commit first.
 
 Tags you push yourself work too, e.g. a pre-release:
 
@@ -415,9 +417,9 @@ its ruleset, and tags it creates don't start workflows, so their builds would
 never run. The release commits also keep the history current, which stops
 GitHub disabling the daily job after 60 days without activity.
 
-1. [Create a GitHub App](https://github.com/settings/apps/new) with
-   **Contents** and **Workflows: Read and write** permissions and webhooks off,
-   and install it on this repository only.
+1. [Create a GitHub App](https://github.com/settings/apps/new) with the
+   **Contents: Read and write** permission and webhooks off, and install it on
+   this repository only.
 2. Add the App to the bypass list of the `protect-main` ruleset.
 3. In the repository's Actions settings, add the App's client ID as the variable
    `RELEASE_APP_CLIENT_ID`, and a generated private key as the secret
