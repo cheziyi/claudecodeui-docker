@@ -355,12 +355,12 @@ it installs. The release's tag points at that commit, and pushing the tag builds
 it. `.github/workflows/build.yml` (*Build image*) has two jobs:
 
 - **`release`** decides on and creates releases, without building:
-  - **Daily** (04:17 UTC): when an upstream version within its range has
-    changed since the latest release, releases the next patch. Otherwise it
-    does nothing.
+  - **Daily** (04:17 UTC): releases when an upstream version within its range
+    has changed since the latest release, or when a PR merged since then is
+    labelled `minor` or `major`. Otherwise it does nothing.
   - **Manual** (*Actions → Build image → Run workflow*, from `main`): releases
-    the next patch, minor or major (the `bump` choice), even if nothing upstream
-    changed. Use it to ship work merged to `main`, or to pick up security fixes.
+    now, even if nothing upstream changed. Use it to ship work merged to `main`
+    without waiting for the daily run, or to pick up security fixes.
 
   Either way it commits `versions.env` to `main`, then creates the tag and a
   GitHub release listing the upstream changes and the PRs merged since the last
@@ -375,9 +375,23 @@ it. `.github/workflows/build.yml` (*Build image*) has two jobs:
     named `build`, which is the check to require in branch protection.
 
 Releases are cut from the head of `main`, so anything merged ships with the
-next release, which may be the next day's automatic patch. Merge only what's
-ready to release, and when a change deserves a minor or major version, run the
-manual release with that `bump` right after merging it.
+next release. Merge only what's ready to release, and label the PR with the
+version it needs:
+
+| PR label | Release | For |
+|---|---|---|
+| `major` | `2.0.0` | breaking changes for existing setups |
+| `minor` | `1.3.0` | new features |
+| none | `1.2.3` | fixes, docs, CI |
+
+A release takes the biggest bump among the PRs merged since the last one, and
+the manual run's `bump` choice can raise it further. The release notes group the
+PRs by these labels (see [`.github/release.yml`](.github/release.yml)). A labelled
+PR goes out with the next daily run, or straight away with a manual one:
+
+```sh
+gh workflow run build.yml --ref main
+```
 
 If a release's build fails, it has no image, and the next daily run starts its
 build again instead of releasing past it. A manual run does the same and stops;
@@ -418,10 +432,8 @@ up to their npm `latest` tag, fnm and uv from their published GitHub releases.
 When a newer version is out that a range keeps out, the run notes it.
 
 To adopt it, widen the range in a PR, and let the PR's smoke test and your own
-testing decide the release: a new major of this image if it breaks existing
-setups (changed settings or data, removed features), a minor otherwise. Run that
-release right after merging, before the daily job ships the new major as a
-patch.
+testing decide the release: label the PR `major` if it breaks existing setups
+(changed settings or data, removed features), `minor` otherwise.
 
 ## License
 

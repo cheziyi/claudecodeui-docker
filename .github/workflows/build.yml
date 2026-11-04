@@ -12,13 +12,15 @@ on:
   # new version within its ranges.
   schedule:
     - cron: "17 4 * * *"
-  # From main: release the next patch, minor or major even if nothing upstream
-  # changed, e.g. to pick up security fixes or ship merged work.
+  # Both also release a minor or major when a PR merged since the last release
+  # has that label.
+  # From main: release now even if nothing upstream changed, e.g. to pick up
+  # security fixes or ship merged work.
   # From a release tag: build that release again if its image isn't published.
   workflow_dispatch:
     inputs:
       bump:
-        description: Which part of the version to raise (runs from main)
+        description: Which part of the version to raise at least (runs from main; PR labels can raise it further)
         type: choice
         options: [patch, minor, major]
         default: patch
@@ -40,6 +42,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      # Reads the labels of the PRs merged since the last release.
+      pull-requests: read
       # Starts the build of a release whose image is missing.
       actions: write
     env:
@@ -76,11 +80,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Compares the latest release's image, read from its labels, with the
-      # resolved versions. Daily runs release only when they differ.
+      # resolved versions. Daily runs release only when they differ, or when a
+      # PR merged since then is labelled minor or major.
       - name: Release
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ACTIONS_TOKEN: ${{ github.token }}
+          JOB_TOKEN: ${{ github.token }}
           BUMP: ${{ inputs.bump }}
           CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
           CLAUDE: ${{ steps.versions.outputs.claude }}
@@ -99,7 +104,7 @@ jobs:
           # Still building, or its build failed. Build it again rather than
           # releasing past it; that run skips if the image is out by then.
           if ! config="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>/dev/null)"; then
-            GH_TOKEN="$ACTIONS_TOKEN" gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$latest"
+            GH_TOKEN="$JOB_TOKEN" gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$latest"
             echo "::warning::$ref isn't published; started its build again. Releases wait until it is."
             [ "$GITHUB_EVENT_NAME" = schedule ] || exit 1
             exit 0
@@ -119,13 +124,26 @@ jobs:
               changes+="${changes:+, }${names[i]} ${have[i]} → ${want[i]}"
             fi
           done
-          if [ -z "$changes" ] && [ "$GITHUB_EVENT_NAME" = schedule ]; then
+          # The biggest bump asked for: by this run, or by a `minor` or `major`
+          # label on a PR merged since the latest release.
+          rank() { case "$1" in major) echo 2 ;; minor) echo 1 ;; *) echo 0 ;; esac; }
+          bump="${BUMP:-patch}"
+          for sha in $(git rev-list "$latest..HEAD"); do
+            while IFS= read -r label; do
+              if [ "$(rank "$label")" -gt "$(rank "$bump")" ]; then
+                bump="$label"
+                echo "Raised to $bump by the label on the PR of $sha" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            done < <(GH_TOKEN="$JOB_TOKEN" gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq '.[] | select(.merged_at) | .labels[].name')
+          done
+
+          if [ -z "$changes" ] && [ "$bump" = patch ] && [ "$GITHUB_EVENT_NAME" = schedule ]; then
             echo "$ref already has these versions (${want[*]}); nothing to release." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
           IFS=. read -r major minor patch <<<"$current"
-          case "${BUMP:-patch}" in
+          case "$bump" in
             major) version="$((major + 1)).0.0" ;;
             minor) version="$major.$((minor + 1)).0" ;;
             *) version="$major.$minor.$((patch + 1))" ;;
@@ -148,7 +166,7 @@ jobs:
 
           # The App's tag starts the build. The generated notes add the PRs
           # merged since the last release.
-          notes="Rebuilt with current Debian packages."
+          notes="With current Debian packages."
           [ -z "$changes" ] || notes="Updates $changes, with current Debian packages."
           gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$commit" \
             --title "v$version" --notes "$notes" --generate-notes
