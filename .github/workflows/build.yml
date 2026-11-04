@@ -5,21 +5,23 @@ on:
   # can be a required check. Nothing is pushed.
   pull_request:
   # Pushing a release tag (v1.2.3, or v1.2.3-rc.1 for a pre-release) publishes
-  # that release.
+  # that release. The `release` job's tags land here too.
   push:
     tags: ["v*"]
-  # Daily: publish a new patch release of the latest release's code when
-  # CloudCLI, Claude Code, fnm or uv has a new version within its ranges, picking
-  # up Debian updates along the way.
+  # Daily: release the next patch when CloudCLI, Claude Code, fnm or uv has a
+  # new version within its ranges.
   schedule:
     - cron: "17 4 * * *"
-  # Manual: publish a new patch release from scratch even if nothing upstream
-  # changed, e.g. to pick up security fixes. Publishes only when run from main.
+  # From main: release the next patch, minor or major even if nothing upstream
+  # changed, e.g. to pick up security fixes or ship merged work.
+  # From a release tag: build that release again if its image isn't published.
   workflow_dispatch:
     inputs:
-      version:
-        description: Release line to patch, e.g. 1.2.3 patches the newest 1.2.x (default the latest release)
-        required: false
+      bump:
+        description: Which part of the version to raise (runs from main)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 concurrency:
   # Release tags each get their own group, so one can't cancel another while
@@ -29,156 +31,30 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Also the required status check's name; renaming it breaks branch protection.
-  build:
+  # Releases without building: commits the versions to versions.env on main,
+  # then tags that commit, and the tag's push builds it. Every release is a
+  # commit on main whose versions.env says exactly what its image contains.
+  release:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
-      # Creates the tags and GitHub releases of patch releases.
-      contents: write
-      packages: write
+      contents: read
+      packages: read
+      # Starts the build of a release whose image is missing.
+      actions: write
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/claudecodeui
-      PUSH: ${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Release tags, to find the latest release and which tags move.
+          # Release tags, to find the latest release.
           fetch-depth: 0
-          # The repo is the build context, so keep the write token out of it.
           persist-credentials: false
 
-      # Which release this run builds, checked out. Daily and manual runs build
-      # the newest release of a line under the next patch version, so main's
-      # unreleased changes wait for a release, and published versions never change.
-      - name: Resolve release
-        id: release
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          image="${IMAGE,,}"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          stable() { git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V; }
-
-          case "$GITHUB_EVENT_NAME" in
-            pull_request)
-              {
-                echo "version=0.0.0-pr.${{ github.event.number }}"
-                echo "revision=$GITHUB_SHA"
-              } >> "$GITHUB_OUTPUT"
-              exit 0 ;;
-            push)
-              tag="$GITHUB_REF_NAME" ;;
-            *)
-              if [ -n "${INPUT_VERSION:-}" ]; then tag="v${INPUT_VERSION#v}"; else tag="$(stable | tail -1)"; fi
-              if ! stable | grep -qxF "$tag"; then
-                echo "::error::No stable release tag $tag"
-                exit 1
-              fi
-              line="${tag%.*}"
-              base="$(stable | grep -E "^${line//./\\.}\.[0-9]+$" | tail -1)"
-              git checkout --detach "$base"
-              tag="$line.$(( ${base##*.} + 1 ))"
-              echo "base=${base#v}" >> "$GITHUB_OUTPUT" ;;
-          esac
-
-          version="${tag#v}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::$tag is not a release tag (vX.Y.Z or vX.Y.Z-prerelease)"
-            exit 1
-          fi
-          {
-            echo "version=$version"
-            echo "tags=$image:$version"
-            echo "revision=$(git rev-parse HEAD)"
-          } >> "$GITHUB_OUTPUT"
-          echo "Release $version" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Resolve upstream versions
-        id: versions
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # A failed lookup inside $(...) fails the step, instead of leaving
-          # no versions and a misleading "no release matches" error.
-          shopt -s inherit_errexit
-          # The ranges come from the release being built, so each release line
-          # keeps the upstream majors it was released with.
-          # shellcheck source=/dev/null
-          . ./upstream.env
-          npm install --prefix "$RUNNER_TEMP/semver" --no-audit --no-fund --loglevel=error semver@7.7.2
-          semver="$RUNNER_TEMP/semver/node_modules/.bin/semver"
-          # Stable versions matching a range, ascending; prints nothing if none.
-          matching() { "$semver" -r "$1" "${@:2}" || true; }
-          # Up to the `latest` dist-tag, like `npm install`: a package can
-          # publish ahead of it.
-          npm_versions() {
-            local info latest
-            info="$(npm view "$1" dist-tags.latest versions --json)"
-            latest="$(jq -r '.["dist-tags.latest"]' <<<"$info")"
-            # shellcheck disable=SC2046 # one version per word
-            matching "<=$latest" $(jq -r '.versions[]' <<<"$info")
-          }
-          # gh_versions <repo> <assets...>: published releases that have every
-          # asset the Dockerfile downloads. A tag can exist hours before its
-          # release, and a release can be published before its assets upload.
-          gh_versions() {
-            local repo="$1" tags
-            shift
-            tags="$(gh api --paginate "repos/$repo/releases?per_page=100" | jq -r --args '.[]
-              | select((.draft or .prerelease) | not)
-              | select($ARGS.positional - [.assets[] | select(.state == "uploaded") | .name] == [])
-              | .tag_name' "$@")"
-            # shellcheck disable=SC2086 # one version per word
-            matching '*' $tags
-          }
-
-          # resolve <name> <output> <range> <versions...>: picks the newest
-          # version in the range, and notes a newer one the range keeps out.
-          # The versions come sorted, so the last one is the newest.
-          resolve() {
-            local name="$1" output="$2" range="$3" pick
-            shift 3
-            pick="$(matching "$range" "$@" | tail -1)"
-            if [ -z "$pick" ]; then
-              echo "::error::No $name release matches $range in upstream.env"
-              exit 1
-            fi
-            if [ "${!#}" != "$pick" ]; then
-              echo "::notice::$name ${!#} is out but outside $range; staying on $pick. Widen the range in upstream.env to adopt it."
-            fi
-            echo "$output=$pick" >> "$GITHUB_OUTPUT"
-            echo "- $name $pick (\`$range\`)" >> "$GITHUB_STEP_SUMMARY"
-          }
-
-          cloudcli="$(npm_versions @cloudcli-ai/cloudcli)"
-          claude="$(npm_versions @anthropic-ai/claude-code)"
-          fnm="$(gh_versions Schniz/fnm fnm-linux.zip fnm-arm64.zip)"
-          uv="$(gh_versions astral-sh/uv uv-{x86_64,aarch64}-unknown-linux-gnu.tar.gz{,.sha256})"
-          # shellcheck disable=SC2086 # one version per word
-          {
-            resolve CloudCLI cloudcli "$CLOUDCLI_RANGE" $cloudcli
-            resolve "Claude Code" claude "$CLAUDE_CODE_RANGE" $claude
-            resolve fnm fnm "$FNM_RANGE" $fnm
-            resolve uv uv "$UV_RANGE" $uv
-          }
-
-      - name: Log in to GHCR
-        if: env.PUSH == 'true'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Before anything is published, so a misconfigured App fails the run early.
-      # GITHUB_TOKEN can't tag a commit whose workflow files differ from main's,
-      # which patches often do, or commit to main past its ruleset. See
-      # "Automatic patch releases" in the README.
+      # GITHUB_TOKEN can't commit to main past its ruleset, and tags it creates
+      # don't start workflows. See "The release app" in the README.
       - name: Get the release app's token
         id: app
-        if: env.PUSH == 'true' && vars.RELEASE_APP_CLIENT_ID != ''
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -186,30 +62,49 @@ jobs:
           permission-contents: write
           permission-workflows: write
 
-      # Compares the release being patched with the resolved versions, read from
-      # its labels. Daily runs skip when they match; the changes go in the notes.
-      # Tag pushes skip when that version is already published, as published
-      # versions never change: a patch's own tag lands here.
-      - name: Check whether upstream changed
-        id: existing
-        if: env.PUSH == 'true'
+      - name: Resolve upstream versions
+        id: versions
         env:
-          REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.base || steps.release.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/resolve-versions.sh
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Compares the latest release's image, read from its labels, with the
+      # resolved versions. Daily runs release only when they differ.
+      - name: Release
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ACTIONS_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
           CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
           CLAUDE: ${{ steps.versions.outputs.claude }}
           FNM: ${{ steps.versions.outputs.fnm }}
           UV: ${{ steps.versions.outputs.uv }}
         run: |
           set -euo pipefail
-          if ! config="$(docker buildx imagetools inspect "$REF" --format '{{json .Image}}' 2>/dev/null)"; then
-            echo "$REF isn't published; building it." >> "$GITHUB_STEP_SUMMARY"
+          latest="$(git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -1)"
+          if [ -z "$latest" ]; then
+            echo "::error::No release yet. Push the first release tag by hand."
+            exit 1
+          fi
+          current="${latest#v}"
+          ref="${IMAGE,,}:$current"
+
+          # Still building, or its build failed. Build it again rather than
+          # releasing past it; that run skips if the image is out by then.
+          if ! config="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>/dev/null)"; then
+            GH_TOKEN="$ACTIONS_TOKEN" gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$latest"
+            echo "::warning::$ref isn't published; started its build again. Releases wait until it is."
+            [ "$GITHUB_EVENT_NAME" = schedule ] || exit 1
             exit 0
           fi
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+
           # A multi-platform image gives one config per platform; their labels match.
           mapfile -t have <<<"$(jq -r '(if has("config") then . else first(.[]) end).config.Labels
             | .["io.github.cheziyi.claudecodeui-docker.cloudcli-version"],
@@ -224,10 +119,109 @@ jobs:
               changes+="${changes:+, }${names[i]} ${have[i]} → ${want[i]}"
             fi
           done
-          echo "changes=$changes" >> "$GITHUB_OUTPUT"
           if [ -z "$changes" ] && [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            echo "$ref already has these versions (${want[*]}); nothing to release." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          IFS=. read -r major minor patch <<<"$current"
+          case "${BUMP:-patch}" in
+            major) version="$((major + 1)).0.0" ;;
+            minor) version="$major.$((minor + 1)).0" ;;
+            *) version="$major.$minor.$((patch + 1))" ;;
+          esac
+
+          # The release commit: its versions.env pins what the tag's build
+          # installs. If a later step fails, the next run writes it again.
+          content="# Written by CI: what release $version contains, and what its build
+          # installs. To change which versions releases accept, edit upstream.env.
+          RELEASE=$version
+          CLOUDCLI=$CLOUDCLI
+          CLAUDE_CODE=$CLAUDE
+          FNM=$FNM
+          UV=$UV"
+          url="repos/$GITHUB_REPOSITORY/contents/versions.env"
+          args=(-f "message=Release $version${changes:+: $changes}" -f branch=main -f "content=$(base64 -w0 <<<"$content")")
+          sha="$(gh api "$url?ref=main" --jq .sha 2>/dev/null || true)"
+          [ -z "$sha" ] || args+=(-f "sha=$sha")
+          commit="$(gh api -X PUT "$url" "${args[@]}" --jq .commit.sha)"
+
+          # The App's tag starts the build. The generated notes add the PRs
+          # merged since the last release.
+          notes="Rebuilt with current Debian packages."
+          [ -z "$changes" ] || notes="Updates $changes, with current Debian packages."
+          gh release create "v$version" --repo "$GITHUB_REPOSITORY" --target "$commit" \
+            --title "v$version" --notes "$notes" --generate-notes
+          echo "Released v$version at $commit; its tag builds it." >> "$GITHUB_STEP_SUMMARY"
+
+  # Also the required status check's name; renaming it breaks branch protection.
+  build:
+    if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/claudecodeui
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Release tags, to find which of X.Y, X and latest move.
+          fetch-depth: 0
+          # The repo is the build context, so keep the token out of it.
+          persist-credentials: false
+
+      - name: Resolve release
+        id: release
+        run: |
+          set -euo pipefail
+          image="${IMAGE,,}"
+          {
+            echo "image=$image"
+            echo "revision=$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo "version=0.0.0-pr.${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not a release tag (vX.Y.Z or vX.Y.Z-prerelease)"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tags=$image:$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $version" >> "$GITHUB_STEP_SUMMARY"
+
+      # A release commit's versions.env pins its versions; tags pushed by hand
+      # and PRs resolve them from upstream.env.
+      - name: Resolve upstream versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/resolve-versions.sh "${{ steps.release.outputs.version }}"
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Published versions never change.
+      - name: Check whether it's published
+        id: existing
+        if: env.PUSH == 'true'
+        env:
+          REF: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
+        run: |
+          if docker buildx imagetools inspect "$REF" >/dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "$REF already has these versions (${want[*]}); nothing to do." >> "$GITHUB_STEP_SUMMARY"
+            echo "$REF is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - uses: docker/setup-qemu-action@v4
@@ -389,7 +383,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Each of X.Y, X and latest moves only if this is the highest release in
-      # that line, so a patch to an older line can't take latest backwards.
+      # that line, so a release of an older line can't take latest backwards.
       # Checked against the release tags as they are now, after the push, so a
       # slower run of an older release can't move them back either.
       - name: Move X.Y, X and latest
@@ -397,7 +391,6 @@ jobs:
         env:
           IMAGE: ${{ steps.release.outputs.image }}
           VERSION: ${{ steps.release.outputs.version }}
-          REVISION: ${{ steps.release.outputs.revision }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
@@ -405,8 +398,6 @@ jobs:
           [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || exit 0
           major="${BASH_REMATCH[1]}"; minor="${BASH_REMATCH[2]}"
           git fetch -q --force --tags origin
-          # A patch release's tag is created in the next step; count it here.
-          git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null || git tag "v$VERSION" "$REVISION"
           stable() { git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V; }
 
           tags=()
@@ -419,63 +410,3 @@ jobs:
           fi
           docker buildx imagetools create "${tags[@]/#/--tag=$IMAGE:}" "$IMAGE@$DIGEST"
           echo "Moved ${tags[*]} to $VERSION" >> "$GITHUB_STEP_SUMMARY"
-
-      # Last, so a run that fails earlier leaves no tag and the next one retries
-      # the same version. The tag is on the patched release's commit: only the
-      # upstream versions differ. An App's tag starts another run, which skips
-      # because this version's image exists.
-      - name: Create the GitHub release
-        if: env.PUSH == 'true' && github.event_name != 'push' && steps.existing.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
-          VERSION: ${{ steps.release.outputs.version }}
-          REVISION: ${{ steps.release.outputs.revision }}
-          CHANGES: ${{ steps.existing.outputs.changes }}
-        run: |
-          set -euo pipefail
-          notes="Rebuilt with current Debian packages."
-          [ -z "$CHANGES" ] || notes="Updates $CHANGES, with current Debian packages."
-          highest="$(git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -1)"
-          latest=false
-          [ "$highest" != "v$VERSION" ] || latest=true
-          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$REVISION" \
-            --title "v$VERSION" --notes "$notes" --latest="$latest"
-
-      # Runs on skipped days too, so a failed update is retried by the next run.
-      - name: Record the release on main
-        if: env.PUSH == 'true' && !(github.event_name == 'push' && steps.existing.outputs.skip == 'true')
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          VERSION: ${{ steps.existing.outputs.skip == 'true' && steps.release.outputs.base || steps.release.outputs.version }}
-          CHANGES: ${{ steps.existing.outputs.changes }}
-          CLOUDCLI: ${{ steps.versions.outputs.cloudcli }}
-          CLAUDE: ${{ steps.versions.outputs.claude }}
-          FNM: ${{ steps.versions.outputs.fnm }}
-          UV: ${{ steps.versions.outputs.uv }}
-        run: |
-          set -euo pipefail
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::No release app configured; not recording $VERSION on main."
-            exit 0
-          fi
-          # Only the highest stable release: versions.env describes what latest has.
-          git fetch -q --force --tags origin
-          highest="$(git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -1)"
-          [ "$highest" = "v$VERSION" ] || exit 0
-
-          want="# Written by CI: what the newest release contains. To change which
-          # versions releases accept, edit upstream.env.
-          RELEASE=$VERSION
-          CLOUDCLI=$CLOUDCLI
-          CLAUDE_CODE=$CLAUDE
-          FNM=$FNM
-          UV=$UV"
-          url="repos/$GITHUB_REPOSITORY/contents/versions.env"
-          current="$(gh api "$url?ref=main" 2>/dev/null || true)"
-          have="$(jq -r '.content // ""' <<<"${current:-{\}}" | base64 -d)"
-          [ "$have" != "$want" ] || exit 0
-          args=(-f "message=Release $VERSION${CHANGES:+: $CHANGES}" -f branch=main -f "content=$(base64 -w0 <<<"$want")")
-          sha="$(jq -r '.sha // ""' <<<"${current:-{\}}")"
-          [ -z "$sha" ] || args+=(-f "sha=$sha")
-          gh api -X PUT "$url" "${args[@]}" --silent
-          echo "Recorded $VERSION in versions.env on main" >> "$GITHUB_STEP_SUMMARY"
