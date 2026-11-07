@@ -1,0 +1,9 @@
+# Groups the PRs in generated release notes by the label that set the bump.
+changelog:
+  categories:
+    - title: Breaking changes
+      labels: [major]
+    - title: New features
+      labels: [minor]
+    - title: Other changes
+      labels: ["*"]

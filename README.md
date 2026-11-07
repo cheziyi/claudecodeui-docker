@@ -299,10 +299,10 @@ environment variables, the user, the tools that come with it.
 
 When a new upstream version is out, a daily job publishes the next patch
 release, with current Debian packages and release notes listing what changed.
-Patches stay within the upstream majors their release line was published with
-(see [`upstream.env`](upstream.env)), so a new CloudCLI, Claude Code, fnm or uv
-major arrives only with a manual release of this image, and as a new major here
-if it breaks existing setups.
+Patches stay within the upstream majors set in [`upstream.env`](upstream.env),
+so a new CloudCLI, Claude Code, fnm or uv major arrives only with a minor or
+major release of this image, and as a new major here if it breaks existing
+setups.
 
 Only the newest release line gets these patches. Once `2.0.0` is out, `1` stops
 getting updates; move to `2` after reading its release notes.
@@ -316,7 +316,8 @@ getting updates; move to `2` after reading its release notes.
 
 Exact versions published before automatic patch releases were rebuilt in place,
 and don't change any more. To see which CloudCLI, Claude Code, fnm and uv a build
-contains:
+contains, read [`versions.env`](versions.env) at its release tag, or the image's
+labels:
 
 ```sh
 docker inspect --format '{{json .Config.Labels}}' ghcr.io/cheziyi/claudecodeui:1
@@ -337,57 +338,88 @@ passwordless `sudo` inside the container. Treat port 3001 like SSH access:
 
 ```sh
 docker build -t claudecodeui .   # latest upstream versions
-# Pin versions (CI resolves them from upstream.env):
+# The versions of the release this checkout is at, as CI builds it:
+. ./versions.env
 docker build -t claudecodeui \
-  --build-arg CLOUDCLI_VERSION=1.37.6 \
-  --build-arg CLAUDE_CODE_VERSION=2.1.312 \
-  --build-arg FNM_VERSION=1.39.0 \
-  --build-arg UV_VERSION=0.13.6 .
+  --build-arg CLOUDCLI_VERSION="$CLOUDCLI" \
+  --build-arg CLAUDE_CODE_VERSION="$CLAUDE_CODE" \
+  --build-arg FNM_VERSION="$FNM" \
+  --build-arg UV_VERSION="$UV" .
 ```
 
 ## Releasing and publishing
 
-To release, tag `main` with the new version and push the tag (or create a
-GitHub release, which does the same):
+Every release is a commit on `main` that writes [`versions.env`](versions.env):
+the release's version and the exact CloudCLI, Claude Code, fnm and uv versions
+it installs. The release's tag points at that commit, and pushing the tag builds
+it. `.github/workflows/build.yml` (*Build image*) has two jobs:
+
+- **`release`** decides on and creates releases, without building:
+  - **Daily** (04:17 UTC): releases when an upstream version within its range
+    has changed since the latest release, or when a PR merged since then is
+    labelled `minor` or `major`. Otherwise it does nothing.
+  - **Manual** (*Actions → Build image → Run workflow*, from `main`): releases
+    now, even if nothing upstream changed. Use it to ship work merged to `main`
+    without waiting for the daily run, or to pick up security fixes.
+
+  Either way it commits `versions.env` to `main`, then creates the tag and a
+  GitHub release listing the upstream changes and the PRs merged since the last
+  release.
+- **`build`** builds, smoke-tests and publishes:
+  - **Release tags**: publish that release to GHCR, with the versions pinned in
+    its `versions.env`. `1.2`, `1` and `latest` move only if it's the highest
+    release in that line. A version that's already published is skipped, never
+    rebuilt.
+  - **Pull requests**: build both architectures and smoke-test the image,
+    using the build cache so checks stay fast. Nothing is pushed. The job is
+    named `build`, which is the check to require in branch protection.
+
+Releases are cut from the head of `main`, so anything merged ships with the
+next release. Merge only what's ready to release, and label the PR with the
+version it needs:
+
+| PR label | Release | For |
+|---|---|---|
+| `major` | `2.0.0` | breaking changes for existing setups |
+| `minor` | `1.3.0` | new features |
+| none | `1.2.3` | fixes, docs, CI |
+
+A release takes the biggest bump among the PRs merged since the last one, and
+the manual run's `bump` choice can raise it further. The release notes group the
+PRs by these labels (see [`.github/release.yml`](.github/release.yml)). A labelled
+PR goes out with the next daily run, or straight away with a manual one:
 
 ```sh
-git tag v1.2.0 && git push origin v1.2.0
+gh workflow run build.yml --ref main
 ```
 
-`.github/workflows/build.yml` (*Build image*) then builds, smoke-tests and
-publishes it to GHCR using the repository's built-in `GITHUB_TOKEN`. A tag whose
-version is already published is skipped, not rebuilt. Tags like `v1.3.0-rc.1` publish as a pre-release: only their exact
-tag, never `1`, `1.3` or `latest`.
+If a release's build fails, it has no image. The next daily run starts its build
+again, and releases past it only when an upstream version changed or a merged PR
+asks for a bump, so one broken build can't hold up every later release. A manual
+run always releases past it. To retry by hand, run *Build image* from the
+release's tag. A run that committed `versions.env` but failed before tagging is
+finished by the next run, which tags that commit first.
 
-- **Pull requests**: every PR builds both architectures and smoke-tests the
-  image, using the build cache so checks stay fast. Nothing is pushed. The job
-  is named `build`, which is the check to require in branch protection.
-- **Release tags**: publish that release. `1.2`, `1` and `latest` move only if
-  it's the highest release in that line, so a patch to an older line can't take
-  them backwards.
-- **Daily** (04:17 UTC): publishes a patch of the newest release when an
-  upstream version within its ranges changed, and skips otherwise.
-- **Manual** (*Actions → Build image → Run workflow*, from `main`): publishes a
-  patch of the latest release, or of the line you enter, even if nothing
-  upstream changed, e.g. to pick up security fixes.
+Tags you push yourself work too, e.g. a pre-release:
 
-Pushes to `main` don't publish: changes reach users with the next release you
-tag. Automatic patches are tagged on the commit of the release they patch, so
-they never include unreleased work from `main`. Every run smoke-tests the amd64
-build before the multi-arch build reuses its layers, so the published image is
-the one that passed.
+```sh
+git tag v1.3.0-rc.1 && git push origin v1.3.0-rc.1
+```
 
-### Automatic patch releases
+Its `versions.env` doesn't name it, so its build resolves the versions from
+`upstream.env` instead. Pre-releases publish only their exact tag, never `1`,
+`1.3` or `latest`.
 
-Automatic patches need a GitHub App. `GITHUB_TOKEN` can't tag a commit whose
-workflow files differ from `main`'s, which is common for patches, and it can't
-commit each release to [`versions.env`](versions.env) on `main`. Those commits
-keep the history current and stop GitHub disabling the daily job after 60 days
-without activity.
+### The release app
 
-1. [Create a GitHub App](https://github.com/settings/apps/new) with
-   **Contents** and **Workflows: Read and write** permissions and webhooks off,
-   and install it on this repository only.
+The `release` job needs a GitHub App. `GITHUB_TOKEN` can't commit to `main` past
+its ruleset, and tags it creates don't start workflows, so their builds would
+never run. The release commits also keep the history current, which stops
+GitHub disabling the daily job after 60 days without activity.
+
+1. [Create a GitHub App](https://github.com/settings/apps/new) with the
+   **Contents: Read and write** permission and webhooks off, and install it on
+   this repository only.
 2. Add the App to the bypass list of the `protect-main` ruleset.
 3. In the repository's Actions settings, add the App's client ID as the variable
    `RELEASE_APP_CLIENT_ID`, and a generated private key as the secret
@@ -402,8 +434,8 @@ up to their npm `latest` tag, fnm and uv from their published GitHub releases.
 When a newer version is out that a range keeps out, the run notes it.
 
 To adopt it, widen the range in a PR, and let the PR's smoke test and your own
-testing decide the release: a new major of this image if it breaks existing
-setups (changed settings or data, removed features), a minor otherwise.
+testing decide the release: label the PR `major` if it breaks existing setups
+(changed settings or data, removed features), `minor` otherwise.
 
 ## License
 
