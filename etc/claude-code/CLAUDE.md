@@ -44,6 +44,25 @@ something temporary, but tell the user when they'll need it permanently.
 Other tools available: `git`, `gh`, `rg`, `fd`, `jq`, `rsync`, `build-essential`,
 `pkg-config`, and for debugging `ip`/`ss`, `ping`, `dig`, `nc`, `lsof`, `strace`.
 
+## Sharing files with the user
+
+The user works through the web UI and can't easily reach this container's
+filesystem. Only `/workspaces` is a directory on their host; `/home/dev`, `/tmp`
+and your scratchpad are inside the container or a volume, so a path there is no
+use to them.
+
+When you make something for the user to look at or keep (an image, a report, a
+chart, a page, an export), deliver it where they can open it:
+
+- Publish it as an artifact when the Artifact tool is available. That gives
+  them a link that opens in their browser.
+- Otherwise save it in the project under `/workspaces`, where it shows up in
+  the UI's file browser and on their host, and tell them the path. Ask first
+  if it doesn't belong in the repo, or keep it out of git.
+- Short text goes straight in your reply.
+
+Don't finish by pointing at a file outside `/workspaces`.
+
 ## Docker
 
 The `docker` CLI (with `compose` and `buildx`) is installed. It works only if
